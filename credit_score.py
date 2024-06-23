@@ -1,32 +1,36 @@
 import pandas as pd
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
+import sys
 
-# Sourse of data
+# Source of data
 PATH = r'C:\Masters\Data-NBNL.xlsx'
 
 # No of months consider for customer to be classified as inactive
 OFFSET_MONTHS = relativedelta(months=6)
 
-# Weightage assigned to each parameters
-SETTLEMENT_POINTS = 30_000  # Weight allocated for time taken to settle invoices in full
-AGE_BRACKET_POINTS = 20_000  # Weight allocated for each voucher based on their overdue days
-FULLY_SETTLED_POINTS = AGE_BRACKET_POINTS * 0.25  # Default settlement points for those customers does not have receivable balance as on Target date
-GP_GENERATED = 35_000
-ESTABLISHED_SINCE = 5_000
-WORKED_SINCE = 10_000
+# Weightage assigned to each parameter
+SETTLEMENT_POINTS: int = 30_000  # Weight allocated for time taken to settle invoices in full
+AGE_BRACKET_POINTS: int = 20_000  # Weight allocated for each voucher based on their overdue days
+FULLY_SETTLED_POINTS: int = AGE_BRACKET_POINTS * 0.25  # Default settlement points for those customers does not have
+# receivable balance as on Target date
+GP_GENERATED: int = 35_000
+ESTABLISHED_SINCE_POINTS: int = 5_000  # Weight allocated for the period passed since the incorporation
+WORKED_SINCE: int = 10_000
+TOTAL: int = SETTLEMENT_POINTS + AGE_BRACKET_POINTS + GP_GENERATED + ESTABLISHED_SINCE_POINTS + WORKED_SINCE
+
 
 # end_date = input('Please enter closing date yyyy-mm-dd >>')
 
 # end_date = datetime.strptime(end_date, '%Y-%m-%d')
-start_date = datetime(year=2020, month=11, day=1)
-end_date = datetime(year=2024, month=5, day=31)
+start_date: datetime = datetime(year=2020, month=11, day=1)
+end_date: datetime = datetime(year=2024, month=5, day=31)
 
 df_collection: pd.DataFrame = pd.read_excel(io=PATH,
                                             usecols=['Ledger Code', 'Invoice Number', 'Invoice Amount',
                                                      'Payment Voucher Number',
                                                      'Payment Date',
-                                                     'Invoice Date', 'Clear Date'],
+                                                     'Invoice Date'],
                                             sheet_name='fCollection', date_format={'Invoice Date': '%d-%b-%y'},
                                             dtype={'Payment Voucher Number': 'str'})
 
@@ -125,21 +129,27 @@ first_date: list = []
 for i in df_collection['Ledger Code'].unique():
     ledger_code.append(i)
     filt = (df_collection['Ledger Code'] == i)
-    customer_df = df_collection.loc[filt]
+    customer_df: pd.DataFrame = df_collection.loc[filt]
+    customer_df.reset_index(inplace=True)
     # first date to which a transaction recorded with a particular customer
-    first_business_date = customer_df['Invoice Date'].min()
+    first_business_date: datetime = customer_df['Invoice Date'].min()
 
-    for j, row in customer_df.iterrows():
+    for j, _ in customer_df.iterrows():
+        # first date of working with a customer is ealiest date of worked with him or if he has a lapse of 6 months
+        # between two consecutive transactions dates, then the latest date to which he worked or if the time gap
+        # between his last transaction to the end date is more than 6 months, then the end date.
+        invoice_date: datetime = customer_df.loc[j, 'Invoice Date']
+        last_row: int = len(customer_df) - 1
 
-        invoice_date = row[2]
-        # to check whether end_date (i.e report generating date) is 6 months (OFFSET_MONTHS) after the last tranaction done with 
-        # current customer under consideration. 
-        if end_date >= customer_df.iloc[len(customer_df) - 1, 2] + OFFSET_MONTHS:
-            first_business_date = end_date
-        elif j == 0 or invoice_date >= (invoice_date - OFFSET_MONTHS):
-            continue
-        else:
+        if (j != 0) and (j != last_row) and (invoice_date >= (customer_df.loc[j - 1, 'Invoice Date'] + OFFSET_MONTHS)):
             first_business_date = invoice_date
+        elif (j != 0) and (j == last_row) and (
+                end_date >= (customer_df.loc[last_row, 'Invoice Date'] + OFFSET_MONTHS)) or (j == 0) and (
+                end_date >= (customer_df.loc[last_row, 'Invoice Date'] + OFFSET_MONTHS)):
+            first_business_date = end_date
+        else:
+            pass
+
 
     first_date.append(first_business_date)
 # this will create a datafram which as all the customers in fCollection with their first working date. 
@@ -147,7 +157,15 @@ customer_details = pd.DataFrame(data={'Ledger Code': ledger_code, 'First_Date': 
 customer_details.set_index(keys='Ledger Code', inplace=True)
 
 
-def worked_till_brackets(no_of_months):
+def worked_till_brackets(no_of_months: int) -> int:
+    """Return points based on the no of months since a customer started working with the company
+
+    Args:
+        no_of_months (int): No of months since started working with the company
+
+    Returns:
+        int: Points calculated based on no of months since the customer started working 
+    """
     if no_of_months <= 12:
         return 1
     elif no_of_months <= 24:
@@ -160,10 +178,20 @@ def worked_till_brackets(no_of_months):
         return 5
 
 
-def worked_since_points(customer):
-    first_date = customer_details.loc[customer, 'First_Date']
+def worked_since_points(customer: int) -> float:
+    """Takes Ledger_code of a customer and returns the points based on the no of months a customer have been working 
+
+    Args:
+        customer (int): Ledger_code of a customer
+
+    Returns:
+        float: Points based on no of months a customer have been working.
+    """
+    # to get the first date to which the customer has started working with the company
+    first_date: datetime = customer_details.loc[customer, 'First_Date']
     period_worked = relativedelta(end_date, first_date)
-    period_worked_months = period_worked.months + (period_worked.years * 12) + 1
+    # No of months from the date a customer first started working with
+    period_worked_months: int = period_worked.months + (period_worked.years * 12) + 1
     return worked_till_brackets(no_of_months=period_worked_months) * WORKED_SINCE / 5
 
 
@@ -276,21 +304,36 @@ def points_for_settlement(days_taken: int) -> int:
         return 0
 
 
-cust_master: pd.DataFrame = df_customers
-cust_master.set_index(keys='Ledger_Code', inplace=True)
+def established_date(customer: int) -> datetime:
+    """Takes Ledger_Code assigned to customer and return the established date 
 
+    Args:
+        customer (int): Ledger_code of a customer
 
-def established_date(customer):
+    Returns:
+        datetime: Date established 
+    """
+    # if customer does not exist in dCustomers, then take the earliest date to which the customer had a transaction
+    # in fGL, otherwise take the target date as establishment date
     if pd.isna(cust_master.loc[customer, 'Date_Established']):  # Return True if dCustomer['Date_Established'] is blank
         if customer in df_gl['Ledger Code'].values:  # Check whether target customer exist in df_data
             return df_gl.loc[df_gl['Ledger Code'] == customer, 'Voucher Date'].min()
         else:
             return end_date
+    # if customer exist in dCustomers, then the date of establishment is what mentioned under 'Date_Established'
     else:
-        return cust_master.loc[customer, 'Date_Established']  # Return date if dCutomer['Date_Established'] has a value
+        return cust_master.loc[customer, 'Date_Established']  # Return date if dCustomer['Date_Established'] has a value
 
 
-def established_brackets(no_of_months) -> int:
+def established_brackets(no_of_months: int) -> int:
+    """Takes no of months since the incorporation and return points based on the months
+
+    Args:
+        no_of_months (int): no of months passed  since the incorporation
+
+    Returns:
+        int: Points based on number of months passed since the incorporation.
+    """
     if no_of_months <= (2 * 12):
         return 1
     elif no_of_months <= (4 * 12):
@@ -303,11 +346,21 @@ def established_brackets(no_of_months) -> int:
         return 5
 
 
-def established_points(customer):
-    estb_date = established_date(customer=customer)
+def established_points(customer: int) -> float:
+    """Total number of points allocated to each customer based on the date of establishment of the company. 
+
+    Args:
+        customer (int): Ledger_code of the customer
+
+    Returns:
+        float: points allocated for the period since incorporation
+    """
+    estb_date = established_date(customer=customer)  # Date of establishement for a customer
     years_since = relativedelta(end_date, estb_date)
-    period_worked_months = years_since.months + (years_since.years * 12) + 1
-    return established_brackets(no_of_months=period_worked_months) * ESTABLISHED_SINCE / 5
+    # calculate number of months since the incorporation
+    period_worked_months: int = years_since.months + (years_since.years * 12) + 1
+    # Return points based on the months since the establishment 
+    return established_brackets(no_of_months=period_worked_months) * ESTABLISHED_SINCE_POINTS / 5
 
 
 def age_bracket_points(row) -> float:
@@ -356,14 +409,31 @@ def days_taken_to_settle(row) -> float:
         return points_for_settlement(days_taken=output) * row['Invoice Amount']
 
 
+def thousand_convert(number: int) -> str:
+    """take number and convert to 30K format. if the number is 1_000, then return 1K, else number is 1_500 then
+    return 1.5K
+
+    Args:
+        number (int): number to be converted to 30K format
+
+    Returns:
+        str: string with 30K format
+    """
+    return f"{number // 1_000}K" if number % 1_000 == 0 else f"{number / 1_000:.1f}K"
+
+
+cust_master: pd.DataFrame = df_customers
+cust_master.set_index(keys='Ledger_Code', inplace=True)
+
 df_collection['Balance'] = df_collection.apply(closing_balance, axis=1)
 df_collection['Settlement_Points'] = df_collection.apply(days_taken_to_settle, axis=1)
 df_collection['Bracket Points'] = df_collection.apply(age_bracket_points, axis=1)
 
-df_collection.drop(columns=['Payment Voucher Number', 'Payment Date', 'Clear Date'], inplace=True)
+df_collection.drop(columns=['Payment Voucher Number', 'Payment Date'], inplace=True)
 
 customers: list = df_coa.loc[
     df_coa['Second Level Group Name'].isin(['Due from Related Parties', 'Trade Receivables']), 'Ledger_Code'].to_list()
+# To list of the customers in the chart of accounts
 settlement_duration: list = []
 age_bracket: list = []
 gp_generated: list = []
@@ -431,4 +501,13 @@ final_report = pd.DataFrame(data={'Customer': customers, 'Settlement Duration': 
                                   'Established Since': established_since, 'Worked Since': worked_since})
 final_report['Total'] = final_report[
     ['Settlement Duration', 'Age Bracket', 'GP Generated', 'Established Since', 'Worked Since']].sum(axis=1)
-final_report.to_csv(path_or_buf='report.csv', index=False)
+final_report.sort_values(by=['Total'], ascending=False, inplace=True)
+final_report.rename(columns={'Settlement Duration': f'Settlement Duration({thousand_convert(SETTLEMENT_POINTS)})',
+                             'Age Bracket': f'Age Bracket({thousand_convert(AGE_BRACKET_POINTS)})',
+                             'GP Generated': f'GP Generated({thousand_convert(GP_GENERATED)})',
+                             'Established Since': f'Established Since({thousand_convert(ESTABLISHED_SINCE_POINTS)})',
+                             'Worked Since': f'Worked Since({thousand_convert(WORKED_SINCE)})',
+                             'Total': f'Total({thousand_convert(TOTAL)})',
+                             }, inplace=True)
+
+# final_report.to_csv(path_or_buf='report.csv', index=False)
