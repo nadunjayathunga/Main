@@ -1,7 +1,7 @@
-import pandas as pd
 from datetime import datetime
+import pandas as pd
 from dateutil.relativedelta import relativedelta
-import sys
+import numpy as np
 
 # Source of data
 PATH = r'C:\Masters\Data-NBNL.xlsx'
@@ -14,11 +14,13 @@ SETTLEMENT_POINTS: int = 30_000  # Weight allocated for time taken to settle inv
 AGE_BRACKET_POINTS: int = 20_000  # Weight allocated for each voucher based on their overdue days
 FULLY_SETTLED_POINTS: int = AGE_BRACKET_POINTS * 0.25  # Default settlement points for those customers does not have
 # receivable balance as on Target date
-GP_GENERATED: int = 35_000
+GP_GENERATED_POINTS: int = 35_000
 ESTABLISHED_SINCE_POINTS: int = 5_000  # Weight allocated for the period passed since the incorporation
 WORKED_SINCE: int = 10_000
-TOTAL: int = SETTLEMENT_POINTS + AGE_BRACKET_POINTS + GP_GENERATED + ESTABLISHED_SINCE_POINTS + WORKED_SINCE
-
+TOTAL: int = SETTLEMENT_POINTS + AGE_BRACKET_POINTS + GP_GENERATED_POINTS + ESTABLISHED_SINCE_POINTS + WORKED_SINCE
+OVERDRAFT_INTEREST = True  # Whether to consider overdraft interet or not
+OVERDRAFT_INTEREST_PCT = 0.08  # Current Overdraft Interest
+OVERDRAFT_START_DATE: datetime = datetime(year=2021, month=11, day=23) # Date Overdraft facility started
 
 # end_date = input('Please enter closing date yyyy-mm-dd >>')
 
@@ -58,17 +60,23 @@ df_data = pd.merge(left=df_data[['Voucher_Date', 'Ledger_Code', 'Job_Code', 'net
 df_data = pd.merge(left=df_data, right=df_jobs[['Job_Code', 'Customer_Code', ]], on='Job_Code', how='left')
 df_data = pd.merge(left=df_data, right=df_customers[['Customer_Code', 'Cus_Name']], on='Customer_Code', how='left')
 
+# create a list of dates from start date till end date having first date of each month
 monthly_frequencies = pd.date_range(start=start_date, end=end_date, freq='MS')
 
+# create an empty DataFrame to store Profit made by customers on monthly basis
 profit_report: pd.DataFrame = pd.DataFrame()
 
 for st_date in monthly_frequencies:
+    # To derive the last day of each month
     en_date = st_date + relativedelta(day=31)
 
     df_data_filt = ((df_data['Voucher_Date'] >= st_date) & (df_data['Voucher_Date'] <= en_date) & (
         df_data['Third Level Group Name'].isin(['Direct Income', 'Cost of Sales'])))
 
-    df_data_month = df_data.loc[df_data_filt]
+    # Filtered df_data DataFrame contains transactions which have job_id. Since each job_id has a customer,
+    # Profitability derived from this DataFrame can be directly apportioned to customers with the exception of direct
+    # salary expenes.
+    df_data_month: pd.DataFrame = df_data.loc[df_data_filt]
 
     monthly_profit_report = pd.pivot_table(data=df_data_month, index='Cus_Name', values='net', columns='Ledger Name',
                                            aggfunc='sum')
@@ -91,13 +99,60 @@ for st_date in monthly_frequencies:
     ###Salary cost of each of three streams###
 
     ###Proportionate allocation of salary cost amoung each transaction###
-    monthly_profit_report['s_c'] = monthly_profit_report.apply(
-        lambda row: row['Logistics Revenue - Clearance'] / rev_clearance * sal_clearance, axis=1)
-    monthly_profit_report['s_t'] = monthly_profit_report.apply(
-        lambda row: row['Logistics Revenue - Transport'] / rev_transport * sal_transport, axis=1)
-    monthly_profit_report['s_f'] = monthly_profit_report.apply(
-        lambda row: row['Logistics Revenue - Freight'] / rev_freight * sal_freight, axis=1)
-    ###Proportionate allocation of salary cost amoung each transaction###
+    def calculate_s_c(row:int, rev_clearance:float, sal_clearance:float) -> float:
+        """_summary_
+
+        Args:
+            row (int): _description_
+            rev_clearance (float): _description_
+            sal_clearance (float): _description_
+
+        Returns:
+            float: _description_
+        """
+        if rev_clearance == 0:
+            return np.nan  # Return NaN if rev_clearance is zero to indicate missing or undefined
+        else:
+            return row['Logistics Revenue - Clearance'] / rev_clearance * sal_clearance
+
+    def calculate_s_t(row :int, rev_transport :float, sal_transport:float)->float:
+        """_summary_
+
+        Args:
+            row (int): _description_
+            rev_transport (float): _description_
+            sal_transport (float): _description_
+
+        Returns:
+            float: _description_
+        """
+        if rev_transport == 0:
+            return np.nan  # Return NaN if rev_transport is zero
+        else:
+            return row['Logistics Revenue - Transport'] / rev_transport * sal_transport
+
+    def calculate_s_f(row:int, rev_freight:float, sal_freight:float) ->float:
+        """_summary_
+
+        Args:
+            row (int): _description_
+            rev_freight (float): _description_
+            sal_freight (float): _description_
+
+        Returns:
+            float: _description_
+        """
+        if rev_freight == 0:
+            return np.nan  # Return NaN if rev_freight is zero
+        else:
+            return row['Logistics Revenue - Freight'] / rev_freight * sal_freight
+        
+    monthly_profit_report['s_c'] = monthly_profit_report.apply(lambda row: calculate_s_c(row, rev_clearance, sal_clearance), axis=1)
+
+    monthly_profit_report['s_t'] = monthly_profit_report.apply(lambda row: calculate_s_t(row, rev_transport, sal_transport), axis=1)
+
+    monthly_profit_report['s_f'] = monthly_profit_report.apply(lambda row: calculate_s_f(row, rev_freight, sal_freight), axis=1)
+
 
     # Summing up all revenue ledgers to get the total revenue###
     monthly_profit_report['Revenue'] = monthly_profit_report[
@@ -115,6 +170,7 @@ profit_report = pd.merge(left=profit_report, right=df_customers[['Cus_Name', 'Le
 profit_report.drop(columns='Cus_Name', inplace=True)
 profit_report = profit_report.groupby('Ledger_Code').sum()
 
+
 filt = ((df_collection['Ledger Code'] < 2000000000) & (~df_collection['Ledger Code'].isin([1020201055])) & (
     df_collection['Invoice Number'].str.contains('NBL/IVL|NBL/PIV|NBL/JV|NBL/CN')) &
         (df_collection['Invoice Date'] <= end_date))
@@ -128,7 +184,7 @@ first_date: list = []
 
 for i in df_collection['Ledger Code'].unique():
     ledger_code.append(i)
-    filt = (df_collection['Ledger Code'] == i)
+    filt = df_collection['Ledger Code'] == i
     customer_df: pd.DataFrame = df_collection.loc[filt]
     customer_df.reset_index(inplace=True)
     # first date to which a transaction recorded with a particular customer
@@ -150,7 +206,6 @@ for i in df_collection['Ledger Code'].unique():
         else:
             pass
 
-
     first_date.append(first_business_date)
 # this will create a datafram which as all the customers in fCollection with their first working date. 
 customer_details = pd.DataFrame(data={'Ledger Code': ledger_code, 'First_Date': first_date})
@@ -168,14 +223,13 @@ def worked_till_brackets(no_of_months: int) -> int:
     """
     if no_of_months <= 12:
         return 1
-    elif no_of_months <= 24:
+    if no_of_months <= 24:
         return 2
-    elif no_of_months <= 36:
+    if no_of_months <= 36:
         return 3
-    elif no_of_months <= 48:
+    if no_of_months <= 48:
         return 4
-    else:
-        return 5
+    return 5
 
 
 def worked_since_points(customer: int) -> float:
@@ -249,26 +303,25 @@ def age_points(day_overdue: int) -> int:
     """
     if day_overdue <= 30:
         return 10  # 'Current'
-    elif day_overdue <= 60:
+    if day_overdue <= 60:
         return 9  # '0-30'
-    elif day_overdue <= 90:
+    if day_overdue <= 90:
         return 8  # '31-60'
-    elif day_overdue <= 120:
+    if day_overdue <= 120:
         return 7  # '61-90'
-    elif day_overdue <= 150:
+    if day_overdue <= 150:
         return 6  # '91-120'
-    elif day_overdue <= 180:
+    if day_overdue <= 180:
         return 5  # '121-150'
-    elif day_overdue <= 210:
+    if day_overdue <= 210:
         return 4  # '151-180'
-    elif day_overdue <= 240:
+    if day_overdue <= 240:
         return 3  # '181-210'
-    elif day_overdue <= 270:
+    if day_overdue <= 270:
         return 2  # '211-240'
-    elif day_overdue <= 300:
+    if day_overdue <= 300:
         return 1  # '241-270'
-    else:
-        return 0  # '271+'
+    return 0  # '271+'
 
 
 def points_for_settlement(days_taken: int) -> int:
@@ -282,26 +335,25 @@ def points_for_settlement(days_taken: int) -> int:
     """
     if days_taken <= 30:
         return 10
-    elif days_taken <= 60:
+    if days_taken <= 60:
         return 9
-    elif days_taken <= 90:
+    if days_taken <= 90:
         return 8
-    elif days_taken <= 120:
+    if days_taken <= 120:
         return 7
-    elif days_taken <= 150:
+    if days_taken <= 150:
         return 6
-    elif days_taken <= 180:
+    if days_taken <= 180:
         return 5
-    elif days_taken <= 210:
+    if days_taken <= 210:
         return 4
-    elif days_taken <= 240:
+    if days_taken <= 240:
         return 3
-    elif days_taken <= 270:
+    if days_taken <= 270:
         return 2
-    elif days_taken <= 300:
+    if days_taken <= 300:
         return 1
-    else:
-        return 0
+    return 0
 
 
 def established_date(customer: int) -> datetime:
@@ -336,14 +388,13 @@ def established_brackets(no_of_months: int) -> int:
     """
     if no_of_months <= (2 * 12):
         return 1
-    elif no_of_months <= (4 * 12):
+    if no_of_months <= (4 * 12):
         return 2
-    elif no_of_months <= (6 * 12):
+    if no_of_months <= (6 * 12):
         return 3
-    elif no_of_months <= (8 * 12):
+    if no_of_months <= (8 * 12):
         return 4
-    else:
-        return 5
+    return 5
 
 
 def established_points(customer: int) -> float:
@@ -431,9 +482,11 @@ df_collection['Bracket Points'] = df_collection.apply(age_bracket_points, axis=1
 
 df_collection.drop(columns=['Payment Voucher Number', 'Payment Date'], inplace=True)
 
+# To list of the customers in the chart of accounts
 customers: list = df_coa.loc[
     df_coa['Second Level Group Name'].isin(['Due from Related Parties', 'Trade Receivables']), 'Ledger_Code'].to_list()
-# To list of the customers in the chart of accounts
+
+# empty lists to be filled with calculated points for each customer
 settlement_duration: list = []
 age_bracket: list = []
 gp_generated: list = []
@@ -458,31 +511,13 @@ for row, customer in enumerate(customers):
     bracket_points: float = bracket_points_df['Bracket Points'].sum()  # points allocated to unsettled invoices on the
     # target date based on their overdue days.
 
-    established_since.insert(row, established_points(customer=customer))
-
-    try:
-        worked_since.insert(row, worked_since_points(customer=customer))
-    except KeyError:
-        worked_since.insert(row, 0)
-
-    if customer in profit_report.index:
-        try:
-            profit_pct: float = profit_report.loc[customer, 'Profit'] / profit_report.loc[customer, 'Revenue']
-            profit_pct = max(0, min(profit_pct, 1))
-            gp_generated.insert(row, profit_pct * GP_GENERATED)
-        except ZeroDivisionError:
-            gp_generated.insert(row, 0)
-    else:
-        gp_generated.insert(row, 0)
-
     ####Settlement Duration Column Figures Start#####
-    try:
+    if (total_sales == 0) or (np.isnan(total_sales)):
+        settlement_points, pct_settlement_points   = (0,0)
+    else:
         pct_settlement_points: float = total_settlement_points / total_sales
-        settlement_points: float = pct_settlement_points * SETTLEMENT_POINTS
-        settlement_duration.insert(row, settlement_points)
-
-    except ZeroDivisionError:
-        settlement_duration.insert(row, 0)
+        settlement_points = pct_settlement_points * SETTLEMENT_POINTS
+    settlement_duration.insert(row, settlement_points)
     ####Settlement Duration Column Figures End#####
 
     ####Age Bracket Column Figures Start#####
@@ -491,10 +526,34 @@ for row, customer in enumerate(customers):
         receivable_points: float = bracket_points / total_balance * AGE_BRACKET_POINTS
         age_bracket.insert(row, receivable_points)
     else:
-        receivable_points = pct_settlement_points * FULLY_SETTLED_POINTS  # where the customer does not have
+        receivable_points =  pct_settlement_points * FULLY_SETTLED_POINTS  # where the customer does not have
         # outstanding balance on target date
         age_bracket.insert(row, receivable_points)
     ####Age Bracket Column Figures End#####
+
+    ####GP Generated Column Figures Start#####
+    if customer in profit_report.index:
+        revenue: float = profit_report.loc[customer, 'Revenue']
+        if (revenue == 0) or np.isnan(revenue):
+            gp_generated.insert(row, 0)
+        else:
+            profit_pct: float = profit_report.loc[customer, 'Profit'] / revenue
+            profit_pct = max(0, min(profit_pct, 1))
+            gp_generated.insert(row, profit_pct * GP_GENERATED_POINTS)
+    else:
+        gp_generated.insert(row, 0)
+    ####GP Generated Column Figures end#####
+
+    ####Worked Since Column Figures Start#####
+    try:
+        worked_since.insert(row, worked_since_points(customer=customer))
+    except KeyError:
+        worked_since.insert(row, 0)
+    ####Worked Since Column Figures end#####
+
+    ####Established Since Column Figures Start#####
+    established_since.insert(row, established_points(customer=customer))
+    ####Established Since Column Figures End#####
 
 final_report = pd.DataFrame(data={'Customer': customers, 'Settlement Duration': settlement_duration,
                                   'Age Bracket': age_bracket, 'GP Generated': gp_generated,
@@ -504,7 +563,7 @@ final_report['Total'] = final_report[
 final_report.sort_values(by=['Total'], ascending=False, inplace=True)
 final_report.rename(columns={'Settlement Duration': f'Settlement Duration({thousand_convert(SETTLEMENT_POINTS)})',
                              'Age Bracket': f'Age Bracket({thousand_convert(AGE_BRACKET_POINTS)})',
-                             'GP Generated': f'GP Generated({thousand_convert(GP_GENERATED)})',
+                             'GP Generated': f'GP Generated({thousand_convert(GP_GENERATED_POINTS)})',
                              'Established Since': f'Established Since({thousand_convert(ESTABLISHED_SINCE_POINTS)})',
                              'Worked Since': f'Worked Since({thousand_convert(WORKED_SINCE)})',
                              'Total': f'Total({thousand_convert(TOTAL)})',
