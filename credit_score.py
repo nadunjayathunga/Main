@@ -2,6 +2,8 @@ from datetime import datetime
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 import numpy as np
+from test import total_interest
+import sys
 
 # Source of data
 PATH = r'C:\Masters\Data-NBNL.xlsx'
@@ -52,7 +54,7 @@ df_customers: pd.DataFrame = pd.read_excel(io=PATH, sheet_name='dCustomers',
 
 df_jobs: pd.DataFrame = pd.read_excel(io=PATH, sheet_name='dJobs', usecols=['Job_Number', 'Customer_Code'])
 
-df_jobs['Job_Code'] = df_jobs['Job_Number'].str.split('-', expand=True)[0].str.strip()
+df_jobs['Job_Code'] = df_jobs['Job_Number'].str.split('-', expand=True)[0].str.strip() # NBNLSIFC240015-Rev1
 df_data['net'] = df_data['Credit'] - df_data['Debit']
 
 df_data = pd.merge(left=df_data[['Voucher_Date', 'Ledger_Code', 'Job_Code', 'net']],
@@ -65,6 +67,16 @@ monthly_frequencies = pd.date_range(start=start_date, end=end_date, freq='MS')
 
 # create an empty DataFrame to store Profit made by customers on monthly basis
 profit_report: pd.DataFrame = pd.DataFrame()
+
+
+def interest_amount(row)->float:
+    customer_codes  = df_customers.loc[df_customers['Ledger_Code'] == row.name ,'Customer_Code']
+    customer_code :str = customer_codes.iloc[0]
+    customer_code = customer_code.split(sep='-')[0].strip()
+    jobs :list = df_jobs.loc[df_jobs['Customer_Code']==customer_code,'Job_Number'].to_list()
+    jobs =  [job.split(sep='-')[0].strip() for job in jobs]
+    return total_interest(jobs=jobs)
+
 
 for st_date in monthly_frequencies:
     # To derive the last day of each month
@@ -169,6 +181,10 @@ for st_date in monthly_frequencies:
 profit_report = pd.merge(left=profit_report, right=df_customers[['Cus_Name', 'Ledger_Code']], how='left', on='Cus_Name')
 profit_report.drop(columns='Cus_Name', inplace=True)
 profit_report = profit_report.groupby('Ledger_Code').sum()
+#|Ledger_Code|Revenue|Profit|
+profit_report['OD_Int'] = profit_report.apply(interest_amount,axis=1)
+profit_report['Profit'] = profit_report['Profit'] - profit_report['OD_Int']
+profit_report.drop(columns='OD_Int',inplace=True)
 
 
 filt = ((df_collection['Ledger Code'] < 2000000000) & (~df_collection['Ledger Code'].isin([1020201055])) & (
@@ -569,4 +585,4 @@ final_report.rename(columns={'Settlement Duration': f'Settlement Duration({thous
                              'Total': f'Total({thousand_convert(TOTAL)})',
                              }, inplace=True)
 
-# final_report.to_csv(path_or_buf='report.csv', index=False)
+final_report.to_csv(path_or_buf='report.csv', index=False)
