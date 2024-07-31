@@ -2,15 +2,12 @@ from datetime import datetime
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 import numpy as np
-from test import total_interest
-import sys
+from od_interest import total_interest
 
-# Source of data
-PATH = r'C:\Masters\Data-NBNL.xlsx'
 
+PATH = r'C:\Masters\Data-NBNL.xlsx' # Source of data
 # No of months consider for customer to be classified as inactive
 OFFSET_MONTHS = relativedelta(months=6)
-
 # Weightage assigned to each parameter
 SETTLEMENT_POINTS: int = 30_000  # Weight allocated for time taken to settle invoices in full
 AGE_BRACKET_POINTS: int = 20_000  # Weight allocated for each voucher based on their overdue days
@@ -20,23 +17,19 @@ GP_GENERATED_POINTS: int = 35_000
 ESTABLISHED_SINCE_POINTS: int = 5_000  # Weight allocated for the period passed since the incorporation
 WORKED_SINCE: int = 10_000
 TOTAL: int = SETTLEMENT_POINTS + AGE_BRACKET_POINTS + GP_GENERATED_POINTS + ESTABLISHED_SINCE_POINTS + WORKED_SINCE
-OVERDRAFT_INTEREST = True  # Whether to consider overdraft interet or not
 OVERDRAFT_INTEREST_PCT = 0.08  # Current Overdraft Interest
-OVERDRAFT_START_DATE: datetime = datetime(year=2021, month=11, day=23) # Date Overdraft facility started
+OVERDRAFT_START_DATE: datetime = datetime(year=2022, month=11, day=13) # Date Overdraft facility started
 
-# end_date = input('Please enter closing date yyyy-mm-dd >>')
-
-# end_date = datetime.strptime(end_date, '%Y-%m-%d')
 start_date: datetime = datetime(year=2020, month=11, day=1)
 end_date: datetime = datetime(year=2024, month=5, day=31)
 
 df_collection: pd.DataFrame = pd.read_excel(io=PATH,
-                                            usecols=['Ledger Code', 'Invoice Number', 'Invoice Amount',
-                                                     'Payment Voucher Number',
-                                                     'Payment Date',
-                                                     'Invoice Date'],
-                                            sheet_name='fCollection', date_format={'Invoice Date': '%d-%b-%y'},
-                                            dtype={'Payment Voucher Number': 'str'})
+                                                usecols=['Ledger Code', 'Invoice Number', 'Invoice Amount',
+                                                        'Payment Voucher Number',
+                                                        'Payment Date',
+                                                        'Invoice Date'],
+                                                sheet_name='fCollection', date_format={'Invoice Date': '%d-%b-%y'},
+                                                dtype={'Payment Voucher Number': 'str'})
 
 df_data: pd.DataFrame = pd.read_excel(io=PATH, sheet_name='fData',
                                       usecols=['Voucher_Date', 'Ledger_Code', 'Job_Code', 'Debit', 'Credit'])
@@ -55,6 +48,7 @@ df_customers: pd.DataFrame = pd.read_excel(io=PATH, sheet_name='dCustomers',
 df_jobs: pd.DataFrame = pd.read_excel(io=PATH, sheet_name='dJobs', usecols=['Job_Number', 'Customer_Code'])
 
 df_jobs['Job_Code'] = df_jobs['Job_Number'].str.split('-', expand=True)[0].str.strip() # NBNLSIFC240015-Rev1
+# |Job_Number|Customer_Code|Job_Code|
 df_data['net'] = df_data['Credit'] - df_data['Debit']
 
 df_data = pd.merge(left=df_data[['Voucher_Date', 'Ledger_Code', 'Job_Code', 'net']],
@@ -62,129 +56,147 @@ df_data = pd.merge(left=df_data[['Voucher_Date', 'Ledger_Code', 'Job_Code', 'net
 df_data = pd.merge(left=df_data, right=df_jobs[['Job_Code', 'Customer_Code', ]], on='Job_Code', how='left')
 df_data = pd.merge(left=df_data, right=df_customers[['Customer_Code', 'Cus_Name']], on='Customer_Code', how='left')
 
+
+def interest_amount(row)->float:
+    """take customer ledger code and return list of jobs for that customer
+
+    Args:
+        row (_type_): row in profit report 
+
+    Returns:
+        float: list of ledgers for a given customer code
+    """
+    # a row resembles as follows #|Ledger_Code|Revenue|Profit| and Ledger_Code is the index itself. 
+    customer_codes  = df_customers.loc[df_customers['Ledger_Code'] == row.name ,'Customer_Code']
+    # as above code generates a series, below will return the corresponding customer_code for a given ledger_code
+    customer_code :str = customer_codes.iloc[0]
+    # some customer_codes have multiple ledger codes and the duplicates are tagged with "-D". Below will return the customer code as per the system 
+    # i.e C00001-D1 and C00001 is a single customer_code comes with different ledger_codes
+    customer_code = customer_code.split(sep='-')[0].strip()
+    jobs :list = df_jobs.loc[df_jobs['Customer_Code']==customer_code,'Job_Code'].to_list()
+    # list of job for a givne customer_code
+    inter = total_interest(jobs=jobs)
+    print(f'{customer_code}::{inter}')
+    return inter
+
+
 # create a list of dates from start date till end date having first date of each month
 monthly_frequencies = pd.date_range(start=start_date, end=end_date, freq='MS')
 
-# create an empty DataFrame to store Profit made by customers on monthly basis
-profit_report: pd.DataFrame = pd.DataFrame()
+
+def profitability_report(df_data:pd.DataFrame,df_gl:pd.DataFrame,df_customers:pd.DataFrame)->pd.DataFrame:
+
+    # create an empty DataFrame to store Profit made by customers on monthly basis
+    profit_report: pd.DataFrame = pd.DataFrame()
+
+    for st_date in monthly_frequencies:
+        # To derive the last day of each month
+        en_date = st_date + relativedelta(day=31)
+
+        df_data_filt = ((df_data['Voucher_Date'] >= st_date) & (df_data['Voucher_Date'] <= en_date) & (
+            df_data['Third Level Group Name'].isin(['Direct Income', 'Cost of Sales'])))
+
+        # Filtered df_data DataFrame contains transactions which have job_id. Since each job_id has a customer,
+        # Profitability derived from this DataFrame can be directly apportioned to customers with the exception of direct
+        # salary expenes.
+        df_data_month: pd.DataFrame = df_data.loc[df_data_filt]
+
+        monthly_profit_report = pd.pivot_table(data=df_data_month, index='Cus_Name', values='net', columns='Ledger Name',
+                                            aggfunc='sum')
+
+        ###Revenue of each three streams###
+        rev_clearance: float = monthly_profit_report['Logistics Revenue - Clearance'].sum()
+        rev_transport: float = monthly_profit_report['Logistics Revenue - Transport'].sum()
+        rev_freight: float = monthly_profit_report['Logistics Revenue - Freight'].sum()
+        ###Revenue of each three streams###
+
+        ###Salary cost of each of three streams###
+        sal_clearance: float = df_gl.loc[(df_gl['Voucher Date'] >= st_date) & (df_gl['Voucher Date'] <= en_date) & (
+            df_gl['Ledger Name'].isin(
+                ['Employee Benefits - Custom Clearance', 'Salaries Expense - Custom Clearance'])), 'Amount'].sum() * -1
+        sal_transport: float = df_gl.loc[(df_gl['Voucher Date'] >= st_date) & (df_gl['Voucher Date'] <= en_date) & (
+            df_gl['Ledger Name'].isin(
+                ['Employee Benefits - Transport', 'Salaries Expense - Transport'])), 'Amount'].sum() * -1
+        sal_freight: float = df_gl.loc[(df_gl['Voucher Date'] >= st_date) & (df_gl['Voucher Date'] <= en_date) & (
+            df_gl['Ledger Name'].isin(['Employee Benefits - Freight', 'Salaries Expense - Freight'])), 'Amount'].sum() * -1
+        ###Salary cost of each of three streams###
+
+        ###Proportionate allocation of salary cost amoung each transaction###
+        def calculate_s_c(row:int, rev_clearance:float, sal_clearance:float) -> float:
+            """_summary_
+
+            Args:
+                row (int): _description_
+                rev_clearance (float): _description_
+                sal_clearance (float): _description_
+
+            Returns:
+                float: _description_
+            """
+            if rev_clearance == 0:
+                return np.nan  # Return NaN if rev_clearance is zero to indicate missing or undefined
+            else:
+                return row['Logistics Revenue - Clearance'] / rev_clearance * sal_clearance
+
+        def calculate_s_t(row :int, rev_transport :float, sal_transport:float)->float:
+            """_summary_
+
+            Args:
+                row (int): _description_
+                rev_transport (float): _description_
+                sal_transport (float): _description_
+
+            Returns:
+                float: _description_
+            """
+            if rev_transport == 0:
+                return np.nan  # Return NaN if rev_transport is zero
+            else:
+                return row['Logistics Revenue - Transport'] / rev_transport * sal_transport
+
+        def calculate_s_f(row:int, rev_freight:float, sal_freight:float) ->float:
+            """_summary_
+
+            Args:
+                row (int): _description_
+                rev_freight (float): _description_
+                sal_freight (float): _description_
+
+            Returns:
+                float: _description_
+            """
+            if rev_freight == 0:
+                return np.nan  # Return NaN if rev_freight is zero
+            else:
+                return row['Logistics Revenue - Freight'] / rev_freight * sal_freight
+            
+        monthly_profit_report['s_c'] = monthly_profit_report.apply(lambda row: calculate_s_c(row, rev_clearance, sal_clearance), axis=1)
+
+        monthly_profit_report['s_t'] = monthly_profit_report.apply(lambda row: calculate_s_t(row, rev_transport, sal_transport), axis=1)
+
+        monthly_profit_report['s_f'] = monthly_profit_report.apply(lambda row: calculate_s_f(row, rev_freight, sal_freight), axis=1)
 
 
-def interest_amount(row)->float:
-    customer_codes  = df_customers.loc[df_customers['Ledger_Code'] == row.name ,'Customer_Code']
-    customer_code :str = customer_codes.iloc[0]
-    customer_code = customer_code.split(sep='-')[0].strip()
-    jobs :list = df_jobs.loc[df_jobs['Customer_Code']==customer_code,'Job_Number'].to_list()
-    jobs =  [job.split(sep='-')[0].strip() for job in jobs]
-    return total_interest(jobs=jobs)
+        # Summing up all revenue ledgers to get the total revenue###
+        monthly_profit_report['Revenue'] = monthly_profit_report[
+            ['Logistics Revenue - Clearance', 'Logistics Revenue - Freight', 'Logistics Revenue - Transport']].sum(axis=1)
+        ###Summing up all cogs ledgers to get the total CoGS###
+        monthly_profit_report['Cost'] = monthly_profit_report[
+            ['Services Cost - Custom Clearance', 'Services Cost - Freight', 'Services Cost - Transport', 's_c', 's_t',
+            's_f']].sum(axis=1)
+        monthly_profit_report['Profit'] = monthly_profit_report[['Revenue', 'Cost']].sum(axis=1)
 
+        monthly_profit_report = monthly_profit_report.loc[:, ['Revenue', 'Profit']]
+        profit_report = pd.concat([monthly_profit_report, profit_report])
 
-for st_date in monthly_frequencies:
-    # To derive the last day of each month
-    en_date = st_date + relativedelta(day=31)
-
-    df_data_filt = ((df_data['Voucher_Date'] >= st_date) & (df_data['Voucher_Date'] <= en_date) & (
-        df_data['Third Level Group Name'].isin(['Direct Income', 'Cost of Sales'])))
-
-    # Filtered df_data DataFrame contains transactions which have job_id. Since each job_id has a customer,
-    # Profitability derived from this DataFrame can be directly apportioned to customers with the exception of direct
-    # salary expenes.
-    df_data_month: pd.DataFrame = df_data.loc[df_data_filt]
-
-    monthly_profit_report = pd.pivot_table(data=df_data_month, index='Cus_Name', values='net', columns='Ledger Name',
-                                           aggfunc='sum')
-
-    ###Revenue of each three streams###
-    rev_clearance: float = monthly_profit_report['Logistics Revenue - Clearance'].sum()
-    rev_transport: float = monthly_profit_report['Logistics Revenue - Transport'].sum()
-    rev_freight: float = monthly_profit_report['Logistics Revenue - Freight'].sum()
-    ###Revenue of each three streams###
-
-    ###Salary cost of each of three streams###
-    sal_clearance: float = df_gl.loc[(df_gl['Voucher Date'] >= st_date) & (df_gl['Voucher Date'] <= en_date) & (
-        df_gl['Ledger Name'].isin(
-            ['Employee Benefits - Custom Clearance', 'Salaries Expense - Custom Clearance'])), 'Amount'].sum() * -1
-    sal_transport: float = df_gl.loc[(df_gl['Voucher Date'] >= st_date) & (df_gl['Voucher Date'] <= en_date) & (
-        df_gl['Ledger Name'].isin(
-            ['Employee Benefits - Transport', 'Salaries Expense - Transport'])), 'Amount'].sum() * -1
-    sal_freight: float = df_gl.loc[(df_gl['Voucher Date'] >= st_date) & (df_gl['Voucher Date'] <= en_date) & (
-        df_gl['Ledger Name'].isin(['Employee Benefits - Freight', 'Salaries Expense - Freight'])), 'Amount'].sum() * -1
-    ###Salary cost of each of three streams###
-
-    ###Proportionate allocation of salary cost amoung each transaction###
-    def calculate_s_c(row:int, rev_clearance:float, sal_clearance:float) -> float:
-        """_summary_
-
-        Args:
-            row (int): _description_
-            rev_clearance (float): _description_
-            sal_clearance (float): _description_
-
-        Returns:
-            float: _description_
-        """
-        if rev_clearance == 0:
-            return np.nan  # Return NaN if rev_clearance is zero to indicate missing or undefined
-        else:
-            return row['Logistics Revenue - Clearance'] / rev_clearance * sal_clearance
-
-    def calculate_s_t(row :int, rev_transport :float, sal_transport:float)->float:
-        """_summary_
-
-        Args:
-            row (int): _description_
-            rev_transport (float): _description_
-            sal_transport (float): _description_
-
-        Returns:
-            float: _description_
-        """
-        if rev_transport == 0:
-            return np.nan  # Return NaN if rev_transport is zero
-        else:
-            return row['Logistics Revenue - Transport'] / rev_transport * sal_transport
-
-    def calculate_s_f(row:int, rev_freight:float, sal_freight:float) ->float:
-        """_summary_
-
-        Args:
-            row (int): _description_
-            rev_freight (float): _description_
-            sal_freight (float): _description_
-
-        Returns:
-            float: _description_
-        """
-        if rev_freight == 0:
-            return np.nan  # Return NaN if rev_freight is zero
-        else:
-            return row['Logistics Revenue - Freight'] / rev_freight * sal_freight
-        
-    monthly_profit_report['s_c'] = monthly_profit_report.apply(lambda row: calculate_s_c(row, rev_clearance, sal_clearance), axis=1)
-
-    monthly_profit_report['s_t'] = monthly_profit_report.apply(lambda row: calculate_s_t(row, rev_transport, sal_transport), axis=1)
-
-    monthly_profit_report['s_f'] = monthly_profit_report.apply(lambda row: calculate_s_f(row, rev_freight, sal_freight), axis=1)
-
-
-    # Summing up all revenue ledgers to get the total revenue###
-    monthly_profit_report['Revenue'] = monthly_profit_report[
-        ['Logistics Revenue - Clearance', 'Logistics Revenue - Freight', 'Logistics Revenue - Transport']].sum(axis=1)
-    ###Summing up all cogs ledgers to get the total CoGS###
-    monthly_profit_report['Cost'] = monthly_profit_report[
-        ['Services Cost - Custom Clearance', 'Services Cost - Freight', 'Services Cost - Transport', 's_c', 's_t',
-         's_f']].sum(axis=1)
-    monthly_profit_report['Profit'] = monthly_profit_report[['Revenue', 'Cost']].sum(axis=1)
-
-    monthly_profit_report = monthly_profit_report.loc[:, ['Revenue', 'Profit']]
-    profit_report = pd.concat([monthly_profit_report, profit_report])
-
-profit_report = pd.merge(left=profit_report, right=df_customers[['Cus_Name', 'Ledger_Code']], how='left', on='Cus_Name')
-profit_report.drop(columns='Cus_Name', inplace=True)
-profit_report = profit_report.groupby('Ledger_Code').sum()
-#|Ledger_Code|Revenue|Profit|
-profit_report['OD_Int'] = profit_report.apply(interest_amount,axis=1)
-profit_report['Profit'] = profit_report['Profit'] - profit_report['OD_Int']
-profit_report.drop(columns='OD_Int',inplace=True)
+    profit_report = pd.merge(left=profit_report, right=df_customers[['Cus_Name','Ledger_Code']], how='left', on='Cus_Name')
+    profit_report.drop(columns='Cus_Name', inplace=True)
+    profit_report = profit_report.groupby('Ledger_Code').sum()
+    #|Ledger_Code|Revenue|Profit|
+    profit_report['OD_Int'] = profit_report.apply(interest_amount,axis=1)
+    profit_report['Profit'] = profit_report['Profit'] - profit_report['OD_Int']
+    profit_report.drop(columns='OD_Int',inplace=True)
+    return profit_report
 
 
 filt = ((df_collection['Ledger Code'] < 2000000000) & (~df_collection['Ledger Code'].isin([1020201055])) & (
@@ -488,6 +500,7 @@ def thousand_convert(number: int) -> str:
     """
     return f"{number // 1_000}K" if number % 1_000 == 0 else f"{number / 1_000:.1f}K"
 
+periodic_profit :pd.DataFrame= profitability_report(df_data=df_data,df_gl=df_gl,df_customers=df_customers)
 
 cust_master: pd.DataFrame = df_customers
 cust_master.set_index(keys='Ledger_Code', inplace=True)
@@ -502,12 +515,14 @@ df_collection.drop(columns=['Payment Voucher Number', 'Payment Date'], inplace=T
 customers: list = df_coa.loc[
     df_coa['Second Level Group Name'].isin(['Due from Related Parties', 'Trade Receivables']), 'Ledger_Code'].to_list()
 
+
 # empty lists to be filled with calculated points for each customer
 settlement_duration: list = []
 age_bracket: list = []
 gp_generated: list = []
 established_since: list = []
 worked_since: list = []
+
 
 for row, customer in enumerate(customers):
     collection_filter = (df_collection['Ledger Code'] == customer) & (df_collection['Balance'] == 0)  # for those
@@ -548,12 +563,12 @@ for row, customer in enumerate(customers):
     ####Age Bracket Column Figures End#####
 
     ####GP Generated Column Figures Start#####
-    if customer in profit_report.index:
-        revenue: float = profit_report.loc[customer, 'Revenue']
+    if customer in periodic_profit.index:
+        revenue: float = periodic_profit.loc[customer, 'Revenue']
         if (revenue == 0) or np.isnan(revenue):
             gp_generated.insert(row, 0)
         else:
-            profit_pct: float = profit_report.loc[customer, 'Profit'] / revenue
+            profit_pct: float = periodic_profit.loc[customer, 'Profit'] / revenue
             profit_pct = max(0, min(profit_pct, 1))
             gp_generated.insert(row, profit_pct * GP_GENERATED_POINTS)
     else:
@@ -586,3 +601,5 @@ final_report.rename(columns={'Settlement Duration': f'Settlement Duration({thous
                              }, inplace=True)
 
 final_report.to_csv(path_or_buf='report.csv', index=False)
+
+# to test NBNLRRI210259 /NBNLAIF240121
