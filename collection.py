@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-
+from colorama import Fore, init
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 
@@ -9,12 +9,12 @@ This Programme requires following dataframes
 2. dCustomers
 3. fCollection
 """
-
-PATH = r'C:\Masters\Data-ESS.xlsx'
+init()
+PATH = r'C:\Masters\Data-NBNL.xlsx'
 # Premium Hospitality
 
 START_DATE: datetime = datetime(year=2020, month=11, day=1)
-END_DATE: datetime = datetime(year=2024, month=7, day=31)
+END_DATE: datetime = datetime(year=2024, month=8, day=31)
 VOUCHER_TYPES: list = ['Project Invoice', 'Contract Invoice', 'SERVICE INVOICE', 'Sales Invoice']
 
 df_gl: pd.DataFrame = pd.read_excel(io=PATH, sheet_name='fGL',
@@ -115,10 +115,10 @@ def already_collected(row) -> float:
     """
     start_date: datetime = row['Due Date'].replace(day=1)
     period_filt = (df_already_collected['Due Date'] >= start_date) & (
-                df_already_collected['Due Date'] <= row['Due Date'])
+            df_already_collected['Due Date'] <= row['Due Date'])
     due_inv_list: list = list(set(df_already_collected.loc[period_filt, 'Voucher Number'].tolist()))
     collected_filt = (already_collected_receipts['Invoice_number'].isin(due_inv_list)) & (
-                already_collected_receipts['Voucher_Date'] < start_date)
+            already_collected_receipts['Voucher_Date'] < start_date)
     amount: float = already_collected_receipts.loc[collected_filt, 'Credit'].sum()
     return amount
 
@@ -137,13 +137,14 @@ def month_end_date(row) -> datetime:
 
 receipts: pd.DataFrame = receipts_recorded(df_gl=df_gl, df_collection=df_collection)
 already_collected_receipts: pd.DataFrame = receipts
-already_collected_receipts.to_csv('already_collected_receipts.csv')
 
 # filters the collection date based on the selection
 filt_collection = (receipts['Voucher_Date'] >= START_DATE) & (receipts['Voucher_Date'] <= END_DATE)
 receipts = receipts.loc[filt_collection]
 # convert collection date to last date of the month, so it can be grouped to know total collected per period.
-receipts['Voucher_Date'] = receipts.apply(month_end_date, axis=1)
+receipts.loc[:, 'Voucher_Date'] = receipts.apply(month_end_date, axis=1)
+# uncomment below to get the detailed break up of actual collection
+# receipts.to_csv('receipts.csv')
 receipts = receipts.groupby(by=['Voucher_Date'], as_index=False)['Credit'].sum()
 receipts.rename(columns={'Voucher_Date': 'Due Date', 'Credit': 'Actual'}, inplace=True)
 # Reasons for Finance / Receipt total for a period not match with 'Actual' in this report
@@ -157,7 +158,6 @@ filt_net_rev = (df_gl['Voucher Date'] >= START_DATE) & (df_gl['Voucher Date'] <=
 df_gl = df_gl.loc[filt_net_rev]
 df_gl['Due Date'] = df_gl.apply(closing_date, axis=1)
 df_already_collected: pd.DataFrame = df_gl
-df_already_collected.to_csv('df_already_collected.csv')
 df_gl = df_gl.groupby(by=['Due Date'], as_index=False)['Debit Amount'].sum()
 df_gl['Already_Collected'] = df_gl.apply(already_collected, axis=1)
 df_gl['Debit Amount'] = df_gl['Debit Amount'] - df_gl['Already_Collected']
@@ -173,3 +173,12 @@ except ZeroDivisionError:
     combined['Performance'] = 0
 
 combined.to_csv(path_or_buf='collection_report.csv', index=False)
+
+unallocated: pd.DataFrame = df_collection.loc[(df_collection['Invoice Date'] >= datetime(year=2024, month=1, day=1)) & (
+    df_collection['Payment Date'].isnull()) & (df_collection.index.str.contains('CN|RV')), ['Invoice Date',
+                                                                                            'Invoice Amount']]
+if unallocated.empty:
+    print(f'{Fore.GREEN}Good to go.All receipts were allocated{Fore.RESET}')
+else:
+    print(f'{Fore.RED}Below vouchers requires allocation\n{unallocated.reset_index()}{Fore.RESET}')
+

@@ -17,11 +17,11 @@ GP_GENERATED_POINTS: int = 35_000
 ESTABLISHED_SINCE_POINTS: int = 5_000  # Weight allocated for the period passed since the incorporation
 WORKED_SINCE: int = 10_000
 TOTAL: int = SETTLEMENT_POINTS + AGE_BRACKET_POINTS + GP_GENERATED_POINTS + ESTABLISHED_SINCE_POINTS + WORKED_SINCE
-OVERDRAFT_INTEREST_PCT = 0.08  # Current Overdraft Interest
+OVERDRAFT_INTEREST_PCT :float = 0.08  # Current Overdraft Interest
 OVERDRAFT_START_DATE: datetime = datetime(year=2022, month=11, day=13) # Date Overdraft facility started
 
 start_date: datetime = datetime(year=2020, month=11, day=1)
-end_date: datetime = datetime(year=2024, month=5, day=31)
+end_date: datetime = datetime(year=2024, month=7, day=31)
 
 df_collection: pd.DataFrame = pd.read_excel(io=PATH,
                                                 usecols=['Ledger Code', 'Invoice Number', 'Invoice Amount',
@@ -76,7 +76,6 @@ def interest_amount(row)->float:
     jobs :list = df_jobs.loc[df_jobs['Customer_Code']==customer_code,'Job_Code'].to_list()
     # list of job for a givne customer_code
     inter = total_interest(jobs=jobs)
-    print(f'{customer_code}::{inter}')
     return inter
 
 

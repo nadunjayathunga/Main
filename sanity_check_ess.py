@@ -15,9 +15,10 @@ file_name: str = company_info[company_id]['data']['file_name']
 file_path = f'C:\Masters\{file_name}.xlsx'
 
 dCoAAdler: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dCoAAdler', usecols=['Ledger_Code'],dtype={'Ledger_Code': 'str'})
-dCusOrder: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dCusOrder', usecols=['Order_ID', 'Customer Code'])
+dCusOrder: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dCusOrder', usecols=['Order_ID', 'Customer Code','Employee_Code'])
 dContracts: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dContracts',
                                          usecols=['Order_Reference_Number', 'Customer_Code', 'Emp_id'])
+dContracts['Order_Reference_Number'] = dContracts['Order_Reference_Number'].str.split('-', expand=True)[0].str.strip()
 dEmployee: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dEmployee', usecols=['Employee_Code'])
 dCustomers: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dCustomers',
                                          usecols=['Customer_Code', 'Ledger_Code'])
@@ -26,9 +27,9 @@ fCollection: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCollection'
 fGL: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fGL', usecols=['Ledger Code'],dtype={'Ledger Code': 'str'})
 fOutSourceInv: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fOutSourceInv',
                                             usecols=['Job_id', 'Customer_Code'])
-fAMCInv: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fAMCInv', usecols=['Customer_Code'])
+fAMCInv: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fAMCInv', usecols=['Customer_Code','Sales Engineer Code','Order_Reference_Number'])
 fProInv: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fProInv', usecols=['Customer_Code', 'Order_ID','Sales Engineer Code'])
-fCreditNote: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCreditNote', usecols=['Ledger_Code'])
+fCreditNote: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCreditNote', usecols=['Ledger_Code','Job_ID'])
 fMI: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fMI', usecols=['Part Number', 'Cost Centre'])
 fMI['Cost Centre'] = fMI['Cost Centre'].str.split('-', expand=True)[0]
 fBudget: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fBudget', usecols=['L5-Code'])
@@ -38,20 +39,22 @@ fLeave: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fLeave', usecols=
 fTkt: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fTkt', usecols=['Cost Center Code  :'])
 fER: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fER', usecols=['Cost Center Code  :'])
 fEOS: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fEOS', usecols=['Cost Center Code  :'])
+dOrderAMC: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dOrderAMC', usecols=['Customer Code','Sales Engineer Code','Order_Reference_Number'])
 
 
 dataframes: dict = {'dCoAAdler': dCoAAdler, 'fOT': fOT, 'dContracts': dContracts,'fTkt':fTkt,
                     'dEmployee': dEmployee, 'dCustomers': dCustomers,'fLeave':fLeave,'fER':fER,'fEOS':fEOS,
                     'fGL': fGL, 'fCollection': fCollection, 'dStock': dStock, 'fCreditNote': fCreditNote,
                     'fCC': fCC, 'fBudget': fBudget, 'fMI': fMI, 'dCusOrder': dCusOrder, 'fAMCInv': fAMCInv,
-                    'fProInv': fProInv,'fOutSourceInv': fOutSourceInv,}
+                    'fProInv': fProInv,'fOutSourceInv': fOutSourceInv,'dOrderAMC':dOrderAMC}
 
 column_rename: dict = {'Ledger_Code': ['Ledger_Code', 'Ledger Code', 'L5-Code'],
-                       'Order_Reference_Number': ['Order_Reference_Number', 'Job_id', ],
+                       'Order_Reference_Number': ['Order_Reference_Number', 'Job_id','Job_ID'],
                        'Customer_Code': ['Customer_Code', 'Customer Code'],
                        'Part Number': ['Part Number'],
                        'Employee_Code': ['Employee_Code', 'Emp_id', 'Emp_Code', 'cost_center', 'Cost Centre','Sales Engineer Code','Cost Center Code  :'],
-                       'Order_ID': ['Order_ID']
+                       'Order_ID': ['Order_ID'],
+                       'AMC_Order_ID':['Order_Reference_Number']
                        }
 
 checks: dict = {
@@ -59,17 +62,19 @@ checks: dict = {
     'fGL': ['Ledger_Code'],
     'dContracts': ['Customer_Code', 'Employee_Code'],
     'fCollection': ['Ledger_Code'],
-    'fCreditNote': ['Ledger_Code'],
+    'fCreditNote': ['Ledger_Code','Order_Reference_Number'],
     'fMI': ['Employee_Code', 'Part Number'],
     'fOT': ['Employee_Code'],
     'fOutSourceInv': ['Customer_Code', 'Order_Reference_Number'],
-    'fAMCInv': ['Customer_Code'],
+    'fAMCInv': ['Customer_Code','Employee_Code','AMC_Order_ID'],
     'fProInv': ['Customer_Code', 'Order_ID','Employee_Code'],
     'fBudget': ['Ledger_Code'],
     'fLeave':['Employee_Code'],
     'fTkt':['Employee_Code'],
     'fER':['Employee_Code'],
     'fEOS':['Employee_Code'],
+    'dCusOrder':['Customer_Code','Employee_Code'],
+    'dOrderAMC':['Customer_Code','Employee_Code']
 }
 
 base_lists: dict = {'Ledger_Code': set(dCoAAdler['Ledger_Code'].tolist()),
@@ -78,6 +83,7 @@ base_lists: dict = {'Ledger_Code': set(dCoAAdler['Ledger_Code'].tolist()),
                     'Customer_Code': set(dCustomers['Customer_Code'].tolist()),
                     'Part Number': set(dStock['Part Number'].tolist()),
                     'Order_ID': set(dCusOrder['Order_ID'].tolist()),
+                    'AMC_Order_ID': set(dOrderAMC['Order_Reference_Number'].tolist()),
                     }
 
 def missing_data(dataframe: pd.DataFrame, tests: list) -> list:

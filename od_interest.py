@@ -4,8 +4,8 @@ import pandas as pd
 PATH = r'C:\Masters\Data-NBNL.xlsx'
 # OVERDRAFT_START_DATE: datetime = datetime(year=2020, month=11, day=1)
 OVERDRAFT_START_DATE: datetime = datetime(year=2022, month=11, day=13)
-START_DATE: datetime = datetime(year=2020, month=11, day=1)
-END_DATE: datetime = datetime(year=2024, month=6, day=30)
+START_DATE: datetime = datetime(year=2024, month=7, day=1)
+END_DATE: datetime = datetime(year=2024, month=7, day=31)
 OVERDRAFT_INTEREST_PCT = 0.08  # Current Overdraft Interest
 
 # Finance/MIS Reports/Voucher Details/Job Report with Service Elements
@@ -47,7 +47,7 @@ df_jobs.drop_duplicates(subset=['Job_Number'], keep='first', inplace=True)
 df_jobs.set_index(keys='Job_Number', inplace=True)
 
 # exclusions includes customers and staff relates to Al Ruwais Port Operations.
-exclusion: dict = {'customers': ['CUS0794', 'CUS0781', 'CUS0787', 'CUS0613', 'CUS0756'],
+exclusion: dict = {'customers': ['CUS0794', 'CUS0781', 'CUS0787', 'CUS0613', 'CUS0756','CUS0813'],
                    'staff': ['NBNL0095', 'NBNL0096', 'NBNL0106']}
 
 
@@ -382,7 +382,7 @@ def od_interest(dataframe: pd.DataFrame, receipt_df: pd.DataFrame, tiv: float) -
 
 
 def job_interest(row) -> tuple:
-    """Calculate interest until a given date and the investment made until a givne date for a given job. 
+    """Calculate interest until a given date and the investment made until a given date for a given job. 
 
     Args:
         row (_type_): a row in the report
