@@ -1,45 +1,37 @@
 import pandas as pd
 from colorama import Fore, init
-from data import company_info
 
 init()
 
-print('\n')
-for idx, company in enumerate(company_info):
-    print(f'{idx}\t{company["data"]["long_name"]}')
-print('\n')
-company_id: int = int(input('Please enter company ID>> '))
-print('\n')
-
-file_name: str = company_info[company_id]['data']['file_name']
-file_path = f'C:\Masters\{file_name}.xlsx'
+file_path = r'C:\Masters\Data-ESS.xlsx'
 
 dCoAAdler: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dCoAAdler', usecols=['Ledger_Code'],dtype={'Ledger_Code': 'str'})
-dCusOrder: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dCusOrder', usecols=['Order_ID', 'Customer Code','Employee_Code'])
+dCusOrder: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dCusOrder', usecols=['Order_ID', 'Customer_Code','Employee_Code'])
 dContracts: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dContracts',
-                                         usecols=['Order_Reference_Number', 'Customer_Code', 'Emp_id'])
-dContracts['Order_Reference_Number'] = dContracts['Order_Reference_Number'].str.split('-', expand=True)[0].str.strip()
+                                         usecols=['Order_ID', 'Customer_Code', 'Employee_Code'])
+dContracts['Order_ID'] = dContracts['Order_ID'].str.split('-', expand=True)[0].str.strip()
 dEmployee: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dEmployee', usecols=['Employee_Code'])
 dCustomers: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dCustomers',
                                          usecols=['Customer_Code', 'Ledger_Code'])
 dStock: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dStock', usecols=['Part Number'])
-fCollection: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCollection', usecols=['Ledger Code'])
-fGL: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fGL', usecols=['Ledger Code'],dtype={'Ledger Code': 'str'})
+fCollection: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCollection', usecols=['Ledger_Code'])
+fGL: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fGL', usecols=['Ledger_Code'],dtype={'Ledger_Code': 'str'})
 fOutSourceInv: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fOutSourceInv',
-                                            usecols=['Job_id', 'Customer_Code'])
-fAMCInv: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fAMCInv', usecols=['Customer_Code','Sales Engineer Code','Order_Reference_Number'])
-fProInv: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fProInv', usecols=['Customer_Code', 'Order_ID','Sales Engineer Code'])
-fCreditNote: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCreditNote', usecols=['Ledger_Code','Job_ID'])
-fMI: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fMI', usecols=['Part Number', 'Cost Centre'])
-fMI['Cost Centre'] = fMI['Cost Centre'].str.split('-', expand=True)[0]
-fBudget: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fBudget', usecols=['L5-Code'])
-fOT: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fOT', usecols=['cost_center'])
-fCC: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCC', usecols=['Emp_Code'])
-fLeave: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fLeave', usecols=['Cost Center Code  :'])
-fTkt: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fTkt', usecols=['Cost Center Code  :'])
-fER: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fER', usecols=['Cost Center Code  :'])
-fEOS: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fEOS', usecols=['Cost Center Code  :'])
-dOrderAMC: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dOrderAMC', usecols=['Customer Code','Sales Engineer Code','Order_Reference_Number'])
+                                            usecols=['Order_ID', 'Customer_Code'])
+fAMCInv: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fAMCInv', usecols=['Customer_Code','Order_ID','Employee_Code'])
+fProInv: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fProInv', usecols=['Customer_Code', 'Order_ID','Employee_Code'])
+fCreditNote: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCreditNote', usecols=['Ledger_Code','Order_ID'])
+fMI: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fMI', usecols=['Part Number', 'Employee_Code'])
+fMI['Employee_Code'] = fMI['Employee_Code'].str.split('-', expand=True)[0]
+fBudget: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fBudget', usecols=['Ledger_Code'])
+fOT: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fOT', usecols=['Employee_Code'])
+fCC: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCC', usecols=['Employee_Code'])
+fLeave: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fLeave', usecols=['Employee_Code'])
+fTkt: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fTkt', usecols=['Employee_Code'])
+fER: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fER', usecols=['Employee_Code'])
+fEOS: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fEOS', usecols=['Employee_Code'])
+dOrderAMC: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dOrderAMC', usecols=['Customer_Code','Employee_Code','Order_ID'])
+dJobs:pd.DataFrame = pd.concat([dOrderAMC,dCusOrder,dContracts])
 
 
 dataframes: dict = {'dCoAAdler': dCoAAdler, 'fOT': fOT, 'dContracts': dContracts,'fTkt':fTkt,
@@ -48,25 +40,16 @@ dataframes: dict = {'dCoAAdler': dCoAAdler, 'fOT': fOT, 'dContracts': dContracts
                     'fCC': fCC, 'fBudget': fBudget, 'fMI': fMI, 'dCusOrder': dCusOrder, 'fAMCInv': fAMCInv,
                     'fProInv': fProInv,'fOutSourceInv': fOutSourceInv,'dOrderAMC':dOrderAMC}
 
-column_rename: dict = {'Ledger_Code': ['Ledger_Code', 'Ledger Code', 'L5-Code'],
-                       'Order_Reference_Number': ['Order_Reference_Number', 'Job_id','Job_ID'],
-                       'Customer_Code': ['Customer_Code', 'Customer Code'],
-                       'Part Number': ['Part Number'],
-                       'Employee_Code': ['Employee_Code', 'Emp_id', 'Emp_Code', 'cost_center', 'Cost Centre','Sales Engineer Code','Cost Center Code  :'],
-                       'Order_ID': ['Order_ID'],
-                       'AMC_Order_ID':['Order_Reference_Number']
-                       }
-
 checks: dict = {
     'fCC': ['Employee_Code'],
     'fGL': ['Ledger_Code'],
     'dContracts': ['Customer_Code', 'Employee_Code'],
     'fCollection': ['Ledger_Code'],
-    'fCreditNote': ['Ledger_Code','Order_Reference_Number'],
+    'fCreditNote': ['Ledger_Code','Order_ID'],
     'fMI': ['Employee_Code', 'Part Number'],
     'fOT': ['Employee_Code'],
-    'fOutSourceInv': ['Customer_Code', 'Order_Reference_Number'],
-    'fAMCInv': ['Customer_Code','Employee_Code','AMC_Order_ID'],
+    'fOutSourceInv': ['Customer_Code', 'Order_ID'],
+    'fAMCInv': ['Customer_Code','Order_ID','Employee_Code'],
     'fProInv': ['Customer_Code', 'Order_ID','Employee_Code'],
     'fBudget': ['Ledger_Code'],
     'fLeave':['Employee_Code'],
@@ -78,19 +61,15 @@ checks: dict = {
 }
 
 base_lists: dict = {'Ledger_Code': set(dCoAAdler['Ledger_Code'].tolist()),
-                    'Order_Reference_Number': set(dContracts['Order_Reference_Number'].tolist()),
                     'Employee_Code': set(dEmployee['Employee_Code'].tolist()),
                     'Customer_Code': set(dCustomers['Customer_Code'].tolist()),
                     'Part Number': set(dStock['Part Number'].tolist()),
-                    'Order_ID': set(dCusOrder['Order_ID'].tolist()),
-                    'AMC_Order_ID': set(dOrderAMC['Order_Reference_Number'].tolist()),
+                    'Order_ID': set(dJobs['Order_ID'].tolist()),
                     }
 
 def missing_data(dataframe: pd.DataFrame, tests: list) -> list:
     for test in tests:
-        column_name = [column_name for column_name in list(dataframes.get(dataframe).columns) if
-                       column_name in column_rename.get(test)][0]
-        compare_list: list = [i for i in set(dataframes.get(dataframe)[f'{column_name}'].tolist()) if
+        compare_list: list = [i for i in set(dataframes.get(dataframe)[f'{test}'].tolist()) if
                               isinstance(i, str)]
         missing_values: list = [item for item in compare_list if item not in base_lists[test]]
         if not missing_values:

@@ -24,7 +24,7 @@ def data_sources(company_id: int) -> dict:
     path = f'C:\Masters\{company_info[company_id]["data"]["file_name"]}.xlsx'
     fGL: pd.DataFrame = pd.read_excel(io=path, sheet_name='fGL',
                                       usecols=['Bussiness Unit Name', 'Cost Center', 'Voucher Date', 'Credit Amount',
-                                               'Debit Amount', 'Narration', 'Ledger Code', 'Voucher Number',
+                                               'Debit Amount', 'Narration', 'Ledger_Code', 'Voucher Number',
                                                'Transaction Type'])
     dEmployee: pd.DataFrame = pd.read_excel(io=path, sheet_name='dEmployee',
                                             usecols=['Employee_Code',
@@ -40,38 +40,44 @@ def data_sources(company_id: int) -> dict:
                                              usecols=['Customer_Code', 'Ledger_Code', 'Cus_Name', 'Type', 'Credit_Days',
                                                       'Date_Established'])
     fOutSourceInv: pd.DataFrame = pd.read_excel(io=path,
-                                                usecols=['Invoice_Number', 'Invoice_Date', 'Customer_Code', 'Job_id',
+                                                usecols=['Invoice_Number', 'Invoice_Date', 'Customer_Code', 'Order_ID',
                                                          'Net_Amount'], sheet_name='fOutSourceInv')
     fAMCInv: pd.DataFrame = pd.read_excel(io=path, sheet_name='fAMCInv',
-                                          usecols=['Invoice_Number', 'Invoice_Date', 'Customer_Code', 'Net_Amount','Order_Reference_Number','Sales Engineer Code'])
+                                          usecols=['Invoice_Number', 'Invoice_Date', 'Customer_Code', 'Net_Amount',
+                                                   'Order_ID'])
     fProInv: pd.DataFrame = pd.read_excel(io=path, sheet_name='fProInv',
                                           usecols=['Invoice_Number', 'Invoice_Date', 'Order_ID', 'Customer_Code',
-                                                   'Net_Amount','Sales Engineer Code'])
+                                                   'Net_Amount'])
     fCreditNote: pd.DataFrame = pd.read_excel(io=path, sheet_name='fCreditNote',
-                                              usecols=['Invoice_Number', 'Invoice_Date', 'Ledger_Code', 'Net_Amount','Job_ID'])
+                                              usecols=['Invoice_Number', 'Invoice_Date', 'Ledger_Code', 'Net_Amount',
+                                                       'Order_ID'])
 
     fBudget: pd.DataFrame = pd.read_excel(io=path,
-                                          usecols=['FY', 'L5-Code', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul',
+                                          usecols=['FY', 'Ledger_Code', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul',
                                                    'Aug', 'Sep', 'Oct', 'Nov', 'Dec'], sheet_name='fBudget')
 
-    fCollection: pd.DataFrame = pd.read_excel(io=path, usecols=['Ledger Code', 'Invoice Number', 'Invoice Amount',
+    fCollection: pd.DataFrame = pd.read_excel(io=path, usecols=['Ledger_Code', 'Invoice Number', 'Invoice Amount',
                                                                 'Payment Voucher Number', 'Payment Date',
                                                                 'Invoice Date'], sheet_name='fCollection',
                                               date_format={
                                                   'Invoice Date': '%d-%b-%y'},
                                               dtype={'Payment Voucher Number': 'str'})
-    dCusOrder: pd.DataFrame = pd.read_excel(io=path, usecols=['Order_ID', 'Customer Code', 'Employee_Code'],
+    dCusOrder: pd.DataFrame = pd.read_excel(io=path, usecols=['Order_ID', 'Customer_Code', 'Employee_Code'],
                                             sheet_name='dCusOrder')
-    dContracts: pd.DataFrame = pd.read_excel(io=path, usecols=['Order_Reference_Number', 'Customer_Code', 'Emp_id'],
+    dContracts: pd.DataFrame = pd.read_excel(io=path, usecols=['Order_ID', 'Customer_Code', 'Employee_Code'],
                                              sheet_name='dContracts')
+    dOrderAMC: pd.DataFrame = pd.read_excel(io=path, usecols=['Order_ID', 'Customer_Code', 'Employee_Code'],
+                                            sheet_name='dOrderAMC')
+
     return {'fGL': fGL, 'dEmployee': dEmployee, 'dCoAAdler': dCoAAdler, 'fOutSourceInv': fOutSourceInv,
             'fAMCInv': fAMCInv, 'fProInv': fProInv, 'fCreditNote': fCreditNote, 'dCustomers': dCustomers,
-            'fBudget': fBudget, 'fCollection': fCollection, 'dContracts': dContracts, 'dCusOrder': dCusOrder}
+            'fBudget': fBudget, 'fCollection': fCollection, 'dContracts': dContracts, 'dCusOrder': dCusOrder,
+            'dOrderAMC': dOrderAMC}
 
 
 def first_page(document, report_date: datetime):
     document.add_picture(
-        f'C:\Masters\images\{company_info[company_id]["data"]["abbr"]}-logo.png')
+        f'C:\Masters\images\logo\{company_info[company_id]["data"]["abbr"]}-logo.png')
     first = document.add_paragraph()
     first.add_run('\n\n\n')
     first_run = first.add_run(
@@ -122,7 +128,7 @@ def receipts_recorded(data: pd.DataFrame) -> pd.DataFrame:
         voucher_date = [None] if isinstance(row['Payment Date'], float) else row['Payment Date'].split(sep=',')
         invoice_number = [row['Invoice Number']] if isinstance(pv_number, float) else [row['Invoice Number'] for _ in
                                                                                        range(len(voucher_number))]
-        ledger_code = [row['Ledger Code']] if isinstance(pv_number, float) else [row['Ledger Code'] for _ in
+        ledger_code = [row['Ledger_Code']] if isinstance(pv_number, float) else [row['Ledger_Code'] for _ in
                                                                                  range(len(voucher_number))]
         invoice_date = [row['Invoice Date']] if isinstance(pv_number, float) else [row['Invoice Date'] for _ in
                                                                                    range(len(voucher_number))]
@@ -149,6 +155,7 @@ def preprocessing(data: dict) -> dict:
     fCollection: pd.DataFrame = data['fCollection']
     dContracts: pd.DataFrame = data['dContracts']
     dCusOrder: pd.DataFrame = data['dCusOrder']
+    dOrderAMC: pd.DataFrame = data['dOrderAMC']
 
     fGL['Cost Center'] = fGL['Cost Center'].str.split(
         '|', expand=True)[0].str.strip()  # ESS0012 | GAURAV VASHISTH
@@ -160,8 +167,8 @@ def preprocessing(data: dict) -> dict:
     fGL.drop(columns=['Credit Amount', 'Debit Amount'], inplace=True)
     fGL['Voucher Date'] = fGL.apply(
         lambda row: row['Voucher Date'] + relativedelta(day=31), axis=1)
-    fGL.rename(columns={'Ledger Code': 'Ledger_Code'}, inplace=True)
 
+    dContracts['Order_ID'] = dContracts['Order_ID'].str.split('-', expand=True)[0]
     fOutSourceInv = pd.merge(
         left=fOutSourceInv, right=dCustomers, on='Customer_Code', how='left')
     fAMCInv = pd.merge(left=fAMCInv, right=dCustomers,
@@ -174,11 +181,12 @@ def preprocessing(data: dict) -> dict:
 
     fInvoices: pd.DataFrame = pd.concat(
         [fOutSourceInv, fAMCInv, fProInv, fCreditNote])
-    fInvoices.drop(columns=['Order_ID'], inplace=True)
-
+    dJobs: pd.DataFrame = pd.concat([dContracts, dCusOrder, dOrderAMC], ignore_index=True)
+    fInvoices = pd.merge(left=fInvoices, right=dJobs[['Order_ID', 'Employee_Code']], on='Order_ID',
+                         how='left').sort_values(by='Invoice_Date', ascending=True)
+    fInvoices['Invoice_Date'] = fInvoices['Invoice_Date'].apply(lambda row: row + relativedelta(day=31))
     fBudget = pd.melt(fBudget, id_vars=[
-        'FY', 'L5-Code'], var_name='Month', value_name='Amount')
-    fBudget.rename(columns={'L5-Code': 'Ledger_Code'}, inplace=True)
+        'FY', 'Ledger_Code'], var_name='Month', value_name='Amount')
     fBudget['Voucher Date'] = fBudget.apply(
         lambda x: pd.to_datetime(f'{x["FY"]}-{x["Month"]}-01') + relativedelta(day=31), axis=1)
     fBudget.drop(columns=['FY', 'Month'], inplace=True)
@@ -187,10 +195,6 @@ def preprocessing(data: dict) -> dict:
                        on='Ledger_Code', how='left')
     fBudget['Bussiness Unit Name'] = 'GUARDING-ESS'
     fCollection = receipts_recorded(data=fCollection)
-
-    dContracts.rename(columns={'Order_Reference_Number': 'Order_ID', 'Emp_id': 'Employee_Code'}, inplace=True)
-    dContracts['Order_ID'] = dContracts['Order_ID'].str.split('-', expand=True)[0]
-    dJobs: pd.DataFrame = pd.concat([dContracts, dCusOrder], ignore_index=True)
 
     return {'fGL': fGL, 'dEmployee': dEmployee, 'dCoAAdler': dCoAAdler, 'fInvoices': fInvoices, 'fBudget': fBudget,
             'dCustomers': dCustomers, 'fCollection': fCollection, 'dJobs': dJobs}
@@ -634,13 +638,23 @@ for f_year in financial_periods_pl:
 plcombined = plcombined.reset_index()
 
 
-def bsratios() -> dict:
-    # current_ratio
-    # gearing_ratio
-    # dso
-    # dpo
-    # ccc
-    pass
+def bsratios(bsdata: pd.DataFrame, pldata: pd.DataFrame) -> dict:
+    bsdata.set_index(keys='Description', inplace=True)
+    for period in financial_periods_bs:
+        current_period: str = period.strftime('%Y-%m-%d')
+        prior_year: str = int(period.strftime('%Y')) - 1 if int(period.strftime('%Y')) != 2020 else int(
+            period.strftime('%Y'))
+        privious_period: str = f"{prior_year}-{period.strftime('%m')}-{period.strftime('%d')}"
+        # current_ratio https://corporatefinanceinstitute.com/resources/accounting/current-ratio-formula/  Liquidity ratio
+        current_ratio: float = bsdata.loc['Current Assets', current_period] / bsdata.loc[
+            'Current Liabilities', current_period]
+        # asset turnover ratio https://corporatefinanceinstitute.com/resources/accounting/asset-turnover-ratio/ efficiency
+        asset_turnover: float = pldata.loc['Total Revenue', current_period] / (
+                    (bsdata.loc['Total Assets', current_period] + bsdata.loc['Total Assets', privious_period]) / 2)
+        # roe https://corporatefinanceinstitute.com/resources/accounting/what-is-return-on-equity-roe/ profitability
+        roe: float = pldata.loc['Net Profit', current_period] / ((bsdata.loc['Total Equity', current_period] +
+                                                                  bsdata.loc[
+                                                                      'Total Equity', privious_period]) / 2) * 100
 
 
 def plratios(df_pl: pd.DataFrame) -> dict:
@@ -670,27 +684,30 @@ def plratios(df_pl: pd.DataFrame) -> dict:
 
 def settlement_days(invoices: list) -> int:
     col_days: list = []
+    invoices = [inv for inv in invoices if not "CN" in inv]
     for invoice in invoices:
-        inv_value: float = fCollection.loc[(fCollection['invoice_number'] == invoice), 'invoice_amount'].head(1)
+        inv_value: float = fCollection.loc[(fCollection['invoice_number'] == invoice), 'invoice_amount'].iloc[0]
         total_collection: float = fCollection.loc[(fCollection['invoice_number'] == invoice) & (
                 fCollection['voucher_date'] <= end_date), 'voucher_amount'].sum()
         if (inv_value - total_collection) == 0:
             last_date: datetime = fCollection.loc[(fCollection['invoice_number'] == invoice) & (
                     fCollection['voucher_date'] <= end_date), 'voucher_date'].max()
-            inv_date: datetime = fCollection.loc[(fCollection['invoice_number'] == invoice), 'invoice_date'].head()
+            inv_date: datetime = fCollection.loc[(fCollection['invoice_number'] == invoice), 'invoice_date'].iloc[0]
+
             col_days.append(last_date - inv_date)
-    return statistics.median(col_days)
+
+    return statistics.median(col_days) if col_days else timedelta(days=0)
 
 
 def cust_ageing(customer: str) -> pd.DataFrame:
     ledgers: list = dCustomers.loc[(dCustomers['Cus_Name'] == customer), 'Ledger_Code'].tolist()
-    credit_days: int = dCustomers.loc[dCustomers['Cus_Name'].isin([customer]), 'Credit_Days'].head(1)
+    credit_days: int = int(dCustomers.loc[dCustomers['Cus_Name'].isin([customer]), 'Credit_Days'].iloc[0])
     invoices: list = list(set(fCollection.loc[fCollection['ledger_code'].isin(ledgers), 'invoice_number'].tolist()))
-    cust_soa: pd.DataFrame = fCollection.loc[
-        (fCollection['voucher_date'] <= end_date) & (fCollection['invoice_number'] == invoices), ['invoice_date',
-                                                                                                  'invoice_amount',
-                                                                                                  'voucher_amount',
-                                                                                                  'invoice_number']]
+    cust_soa: pd.DataFrame = fCollection.loc[(fCollection['invoice_number'].isin(invoices)), ['invoice_date',
+                                                                                              'invoice_amount',
+                                                                                              'voucher_amount',
+                                                                                              'invoice_number',
+                                                                                              'voucher_date']]
     inv_value_list: list = []
     age_bracket_list: list = []
     ranges = [(0, 'Not Due'), (30, '1-30'), (60, '31-60'),
@@ -699,15 +716,17 @@ def cust_ageing(customer: str) -> pd.DataFrame:
               (241, '241-270'), (271, '271-300'), (300, '301-330'),
               (331, '331-360'), (float('inf'), 'More than 361')]
     for invoice in invoices:
-        total_collection: float = cust_soa.loc[(cust_soa['invoice_number'] == invoice), 'voucher_amount'].sum()
-        inv_value: float = cust_soa.loc[(cust_soa['invoice_number'] == invoice), 'invoice_amount'].head(1)
+        total_collection: float = cust_soa.loc[
+            (cust_soa['invoice_number'] == invoice) & (cust_soa['voucher_date'] <= end_date), 'voucher_amount'].sum()
+        inv_value: float = cust_soa.loc[(cust_soa['invoice_number'] == invoice), 'invoice_amount'].iloc[0]
         if (inv_value - total_collection) != 0:
             inv_value_list.append(inv_value - total_collection)
-            days_passed: int = (end_date - cust_soa.loc[cust_soa['invoice_date']].head(1) - credit_days).days
+            days_passed: int = (end_date - cust_soa.loc[(cust_soa['invoice_number'] == invoice), 'invoice_date'].iloc[
+                0] - timedelta(days=credit_days)).days
             for threshold, label in ranges:
                 if days_passed <= threshold:
                     age_bracket_list.append(label)
-                break
+                    break
     outstanding_df: pd.DataFrame = pd.DataFrame(
         data={'Inv_Amount': inv_value_list, 'Age Bracket': age_bracket_list}).groupby(by='Age Bracket').sum()
     return outstanding_df
@@ -715,89 +734,155 @@ def cust_ageing(customer: str) -> pd.DataFrame:
 
 def customer_ratios(customers: list, fInvoices: pd.DataFrame, end_date: datetime, fCollection: pd.DataFrame,
                     dCustomer: pd.DataFrame) -> dict:
-    customer: str = ''
-
-    customer_since: datetime = fInvoices.loc[(fInvoices['Cus_Name'] == customer), 'Invoice_Date'].min()
-    total_revenue: float = fInvoices.loc[
-        (fInvoices['Cus_Name'] == customer) & (fInvoices['Invoice_Date'] <= end_date), 'Net_Amount'].sum()
-    cust_invoices: list = fInvoices.loc[(fInvoices['Cus_Name'] == customer), 'Invoice_Number'].to_list()
-    last_receipt_dt: datetime = fCollection.loc[
-        fCollection['invoice_number'].isin(cust_invoices), 'voucher_date'].sort_values(by='voucher_date').tail(1)
-    last_receipt_number: str = fCollection.loc[(fCollection['invoice_number'].isin(cust_invoices)) & (
-            fCollection['voucher_date'] == last_receipt_dt), 'voucher_number'].tail(1)
-    last_receipt_amt: float = fCollection.loc[
-        (fCollection['voucher_number'] == last_receipt_number), 'voucher_amount'].groupby(by='voucher_number').sum()
-    cy_cp_rev: float = fInvoices.loc[(fInvoices['Cus_Name'] == customer) & (fInvoices['Invoice_Date'] <= end_date) & (
-            fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=end_date.month,
-                                                  day=1)), 'invoice_amount'].sum()
-    cy_pp_rev: float = fInvoices.loc[(fInvoices['Cus_Name'] == customer) & (
-            fInvoices['Invoice_Date'] <= end_date.replace(day=1) - timedelta(days=1)) & (
-                                             fInvoices['Invoice_Date'] >= end_date + relativedelta(day=1,
-                                                                                                   months=-1)), 'invoice_amount'].sum()
-    cy_ytd_rev: float = fInvoices.loc[(fInvoices['Cus_Name'] == customer) & (fInvoices['Invoice_Date'] <= end_date) & (
-            fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=1, day=1)), 'invoice_amount'].sum()
-    py_ytd_rev: float = fInvoices.loc[(fInvoices['Cus_Name'] == customer) & (
-            fInvoices['Invoice_Date'] <= datetime(year=end_date - 1, month=end_date.month, day=end_date.date)) & (
-                                              fInvoices['Invoice_Date'] >= datetime(year=end_date.year - 1, month=1,
-                                                                                    day=1)), 'invoice_amount'].sum()
-    py_cp_rev: float = fInvoices.loc[(fInvoices['Cus_Name'] == customer) & (
-            fInvoices['Invoice_Date'] <= datetime(year=end_date - 1, month=end_date.month, day=end_date.date)) & (
-                                             fInvoices['Invoice_Date'] >= datetime(year=end_date.year - 1,
-                                                                                   month=end_date.month,
-                                                                                   day=1)), 'invoice_amount'].sum()
-    collection_median: float = settlement_days(invoices=cust_invoices)
-    credit_days: int = dCustomer.loc[dCustomers['Cus_Name'].isin([customer]), 'Credit_Days'].head(1)
-    date_established: datetime = dCustomer.loc[dCustomer['Cus_Name'].isin([customer]), 'Date_Established'].head(1)
-    outstanding_bal: float = fGL.loc[
-        (fGL['Ledger_Code'].isin(dCustomer.loc[dCustomer['Cus_Name'].isin([customer]), 'Ledger_Code'].tolist())) & (
-                fGL['Voucher Date'] <= end_date), 'Amount'].sum()
-    cy_cp_rev_contrib_pct: float = fInvoices.loc[
-                                       (fInvoices['Cus_Name'] == customer) & (fInvoices['Invoice_Date'] <= end_date) & (
+    customer_info: dict = {}
+    for customer in customers:
+        customer_since: datetime = fInvoices.loc[
+            (fInvoices['Cus_Name'] == customer), 'Invoice_Date'].min() if not pd.isna(
+            fInvoices.loc[(fInvoices['Cus_Name'] == customer), 'Invoice_Date'].min()) else "Not Applicable"
+        total_revenue: float = fInvoices.loc[
+            (fInvoices['Cus_Name'] == customer) & (fInvoices['Invoice_Date'] <= end_date), 'Net_Amount'].sum()
+        cust_invoices: list = fInvoices.loc[(fInvoices['Cus_Name'] == customer), 'Invoice_Number'].to_list()
+        last_receipt_dt: datetime = fCollection.loc[
+            fCollection['invoice_number'].isin(cust_invoices), 'voucher_date'].max() if not pd.isna(fCollection.loc[
+                                                                                                        fCollection[
+                                                                                                            'invoice_number'].isin(
+                                                                                                            cust_invoices), 'voucher_date'].max()) else "Not Collected"
+        last_receipt_number: str = "Not Collected" if last_receipt_dt == "Not Collected" else \
+        fCollection.loc[(fCollection['invoice_number'].isin(cust_invoices)) & (
+                fCollection['voucher_date'] == last_receipt_dt), 'voucher_number'].tail(1).iloc[0]
+        last_receipt_amt: float = "Not Collected" if last_receipt_dt == "Not Collected" else fCollection.loc[
+            (fCollection['voucher_number'] == last_receipt_number), 'voucher_amount'].sum()
+        cy_cp_rev: float = fInvoices.loc[
+            (fInvoices['Cus_Name'] == customer) & (fInvoices['Invoice_Date'] <= end_date) & (
+                    fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=end_date.month,
+                                                          day=1)), 'Net_Amount'].sum()
+        cy_pp_rev: float = fInvoices.loc[(fInvoices['Cus_Name'] == customer) & (
+                fInvoices['Invoice_Date'] <= end_date.replace(day=1) - timedelta(days=1)) & (
+                                                 fInvoices['Invoice_Date'] >= end_date + relativedelta(day=1,
+                                                                                                       months=-1)), 'Net_Amount'].sum()
+        cy_ytd_rev: float = fInvoices.loc[
+            (fInvoices['Cus_Name'] == customer) & (fInvoices['Invoice_Date'] <= end_date) & (
+                    fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=1, day=1)), 'Net_Amount'].sum()
+        py_ytd_rev: float = fInvoices.loc[(fInvoices['Cus_Name'] == customer) & (
+                fInvoices['Invoice_Date'] <= datetime(year=end_date.year - 1, month=end_date.month,
+                                                      day=end_date.day)) & (
+                                                  fInvoices['Invoice_Date'] >= datetime(year=end_date.year - 1, month=1,
+                                                                                        day=1)), 'Net_Amount'].sum()
+        py_cp_rev: float = fInvoices.loc[(fInvoices['Cus_Name'] == customer) & (
+                fInvoices['Invoice_Date'] <= datetime(year=end_date.year - 1, month=end_date.month,
+                                                      day=end_date.day)) & (
+                                                 fInvoices['Invoice_Date'] >= datetime(year=end_date.year - 1,
+                                                                                       month=end_date.month,
+                                                                                       day=1)), 'Net_Amount'].sum()
+        collection_median: float = "Not Collected" if last_receipt_dt == "Not Collected" else settlement_days(
+            invoices=cust_invoices)
+        credit_days: int = dCustomer.loc[dCustomers['Cus_Name'].isin([customer]), 'Credit_Days'].iloc[0]
+        date_established: datetime = dCustomer.loc[dCustomer['Cus_Name'].isin([customer]), 'Date_Established'].iloc[0]
+        outstanding_bal: float = fGL.loc[
+            (fGL['Ledger_Code'].isin(dCustomer.loc[dCustomer['Cus_Name'].isin([customer]), 'Ledger_Code'].tolist())) & (
+                    fGL['Voucher Date'] <= end_date), 'Amount'].sum()
+        cy_cp_rev_contrib_pct: float = fInvoices.loc[
+                                           (fInvoices['Cus_Name'] == customer) & (
+                                                       fInvoices['Invoice_Date'] <= end_date) & (
+                                                   fInvoices['Invoice_Date'] >= datetime(year=end_date.year,
+                                                                                         month=end_date.month,
+                                                                                         day=1)), 'Net_Amount'].sum() / \
+                                       fInvoices.loc[(fInvoices['Invoice_Date'] <= end_date) & (
                                                fInvoices['Invoice_Date'] >= datetime(year=end_date.year,
                                                                                      month=end_date.month,
-                                                                                     day=1)), 'invoice_amount'].sum() / \
-                                   fInvoices.loc[(fInvoices['Invoice_Date'] <= end_date) & (
-                                           fInvoices['Invoice_Date'] >= datetime(year=end_date.year,
-                                                                                 month=end_date.month,
-                                                                                 day=1)), 'invoice_amount'].sum() * 100
-    cy_ytd_rev_contrib_pct: float = fInvoices.loc[(fInvoices['Cus_Name'] == customer) & (
-            fInvoices['Invoice_Date'] <= end_date) & (fInvoices['Invoice_Date'] >= datetime(year=end_date.year,
-                                                                                            month=1,
-                                                                                            day=1)), 'invoice_amount'].sum() / \
-                                    fInvoices.loc[(fInvoices['Invoice_Date'] <= end_date) & (
-                                            fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=1,
-                                                                                  day=1)), 'invoice_amount'].sum() * 100
-    monthyly_rev: pd.DataFrame = fInvoices.loc[
-        (fInvoices['Cus_Name'] == customer) & (fInvoices['Invoice_Date'] <= end_date) & (
+                                                                                     day=1)), 'Net_Amount'].sum() * 100
+        cy_ytd_rev_contrib_pct: float = fInvoices.loc[(fInvoices['Cus_Name'] == customer) & (
+                fInvoices['Invoice_Date'] <= end_date) & (fInvoices['Invoice_Date'] >= datetime(year=end_date.year,
+                                                                                                month=1,
+                                                                                                day=1)), 'Net_Amount'].sum() / \
+                                        fInvoices.loc[(fInvoices['Invoice_Date'] <= end_date) & (
+                                                fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=1,
+                                                                                      day=1)), 'Net_Amount'].sum() * 100
+        monthyly_rev: pd.DataFrame = fInvoices.loc[
+            (fInvoices['Cus_Name'] == customer) & (fInvoices['Invoice_Date'] <= end_date) & (
+                    fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=1, day=1)), ['Invoice_Date',
+                                                                                                 'Net_Amount']].groupby(
+            by=['Invoice_Date']).sum().rename(columns={'Invoice_Date': 'Month', 'Net_Amount': 'Amount'})
+        ageing: pd.DataFrame = cust_ageing(customer=customer)
+        last_sales_person: str = fInvoices.loc[(fInvoices['Invoice_Date'] <= end_date), 'Employee_Code'].tail(1).iloc[0]
+
+        stats: dict = {
+            'customer_since': "Not Applicable" if customer_since == "Not Applicable" else customer_since.strftime(
+                '%d-%m-%Y'), 'total_revenue': round(total_revenue), 'credit_score': 0,
+            'last_receipt_amt': "Not Collected" if last_receipt_dt == "Not Collected" else round(last_receipt_amt),
+            'cy_cp_rev': round(cy_cp_rev), 'cy_pp_rev': round(cy_pp_rev),
+            'last_receipt_dt': "Not Collected" if last_receipt_dt == "Not Collected" else last_receipt_dt.strftime(
+                '%d-%m-%Y'),
+            'cy_ytd_rev': round(cy_ytd_rev), 'py_cp_rev': round(py_cp_rev), 'py_ytd_rev': round(py_ytd_rev),
+            'collection_median': "Not Collected" if last_receipt_dt == "Not Collected" else collection_median.days,
+            'credit_days': credit_days, 'last_sales_person': last_sales_person,
+            'customer_gp': 0, 'outstanding_bal': round(-outstanding_bal), 'ageing': ageing,
+            'date_established': date_established,
+            'cy_cp_rev_contrib_pct': f'{round(cy_cp_rev_contrib_pct, 1)}%',
+            'cy_ytd_rev_contrib_pct': f'{round(cy_ytd_rev_contrib_pct, 1)}%',
+            'cy_cp_roi': 0,
+            'cy_ytd_roi': 0, 'monthyly_rev': monthyly_rev, 'remarks': 0}
+        customer_info[customer] = stats
+    return customer_info
+
+
+def organic_sales(emp_id: str, mode: str) -> float:
+    if mode.lower() == 'month':
+        start_date: datetime = datetime(year=end_date.year, month=end_date.month, day=1)
+    elif mode.lower() == 'ytd':
+        start_date: datetime = datetime(year=end_date.year, month=1, day=1)
+    else:
+        raise ValueError(f'Invalid mode{mode}')
+    customers: list = list(set(fInvoices.loc[(fInvoices['Invoice_Date'] <= end_date) & (
+            fInvoices['Invoice_Date'] >= start_date) & (fInvoices[
+                                                            'Employee_Code'] == emp_id), 'Customer_Code'].tolist()))
+    for customer in customers:
+        first_sales_person: str = fInvoices.loc[(fInvoices['Customer_Code'] == customer), 'Employee_Code'].tolist()[0]
+        if first_sales_person != emp_id:
+            customers.remove(customer)
+    self_sales: float = fInvoices.loc[
+        (fInvoices['Customer_Code'].isin(customers)) & (fInvoices['Invoice_Date'] <= end_date) & (
+                fInvoices['Invoice_Date'] >= start_date), 'Net_Amount'].sum()
+    return self_sales
+
+
+def sales_person(emp_id: str, dEmployee: pd.DataFrame, fInvoices: pd.DataFrame) -> dict:
+    emp_id: str = ''
+    doj: datetime = dEmployee.loc[emp_id, 'doj']
+    cy_cp_rev: float = fInvoices.lo[(fInvoices['Invoice_Date'] <= end_date) & (
+            fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=end_date.month, day=1)) & (
+                                            fInvoices['Employee_Code'] == emp_id), 'Net_Amount'].sum()
+    cy_ytd_rev: float = fInvoices.lo[(fInvoices['Invoice_Date'] <= end_date) & (
+            fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=1, day=1)) & (
+                                             fInvoices['Employee_Code'] == emp_id), 'Net_Amount'].sum()
+    cy_cp_rev_org: float = organic_sales(emp_id=emp_id, mode='month')
+    cy_ytd_rev_org: float = organic_sales(emp_id=emp_id, mode='ytd')
+    cy_cp_customers: list = list(set(fInvoices.loc[(fInvoices['Employee_Code'] == emp_id) & (
+            fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=end_date.month, day=1)) & (fInvoices[
+                                                                                                           'Invoice_Date'] <= end_date), 'Customer_Code'].tolist()))
+    customers_till: list = list(set(fInvoices.loc[(
+            fInvoices['Invoice_Date'] <= end_date + relativedelta(day=31, months=-1)), 'Customer_Code'].tolist()))
+    new_customers_added: int = len([customer for customer in cy_cp_customers if customer not in customers_till])
+    ar_balance: pd.DataFrame = fGL.loc[
+        (fGL['Ledger_Code'].isin(list(set(fInvoices.loc[cy_cp_customers, 'Ledger_Code'].tolist())))) & (
+                fGL['Voucher Date'] <= end_date), ['Ledger_Code', 'Amount']].groupby(by='Ledger_Code').sum()
+    monthly_rev: pd.DataFrame = fInvoices.loc[
+        (fInvoices['Invoice_Date'] <= end_date) & (fInvoices['Employee_Code'] == emp_id) & (
                 fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=1, day=1)), ['Invoice_Date',
-                                                                                             'invoice_amount']].groupby(
-        by=['Invoice_Date']).sum().rename(columns={'Invoice_Date': 'Month', 'invoice_amount': 'Amount'})
-    ageing: pd.DataFrame = cust_ageing(customer=customer)
-
-    stats: dict = {'customer_since': customer_since, 'total_revenue': total_revenue, 'credit_score': 0,
-                   'last_receipt_amt': last_receipt_amt, 'cy_cp_rev': cy_cp_rev, 'cy_pp_rev': cy_pp_rev,
-                   'last_receipt_dt': last_receipt_dt,
-                   'cy_ytd_rev': cy_ytd_rev, 'py_cp_rev': py_cp_rev, 'py_ytd_rev': py_ytd_rev,
-                   'collection_median': collection_median, 'credit_days': credit_days, 'last_sales_person': 0,
-                   'customer_gp': 0, 'outstanding_bal': outstanding_bal, 'ageing': ageing,
-                   'date_established': date_established,
-                   'cy_cp_rev_contrib_pct': cy_cp_rev_contrib_pct, 'cy_ytd_rev_contrib_pct': cy_ytd_rev_contrib_pct,
-                   'cy_cp_roi': 0,
-                   'cy_ytd_roi': 0, 'monthyly_rev': monthyly_rev, 'remarks': 0}
-
-    return stats
-
-
-def sales_person(salesmen: str,dEmployee:pd.DataFrame) -> dict:
-    emp_id :str = ''
-    doj:datetime = dEmployee.loc[emp_id,'doj']
-
-    stats: dict = {'doj':doj, 'target': 0, 'cy_cp_rev': 0,
-                   'cy_ytd_rev': 0, 'cy_cp_rev_org': 0, 'cy_ytd_rev_org': 0,
-                   'new_customers_added': 0, 'cy_cp_gp': 0, 'cy_ytd_gp': 0,
-                   'ar_balance': 0, 'monthly_rev': 0, 'cy_cp_rev_contrib_pct': 0,
-                   'cy_ytd_rev_contri_pct': 0}
-    
+                                                                                             'Net_Amount']].groupby(
+        by='Invoice_Date').sum()
+    cy_cp_rev_total: float = fInvoices.loc[(fInvoices['Invoice_Date'] <= end_date) & (
+            fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=end_date.month,
+                                                  day=1)), 'Net_Amount'].sum()
+    cy_ytd_rev_total: float = fInvoices.loc[(fInvoices['Invoice_Date'] <= end_date) & (
+            fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=1, day=1)), 'Net_Amount'].sum()
+    cy_cp_rev_contrib_pct: float = cy_cp_rev / cy_cp_rev_total * 100
+    cy_ytd_rev_contri_pct: float = cy_ytd_rev / cy_ytd_rev_total * 100
+    stats: dict = {'doj': doj, 'target': 0, 'cy_cp_rev': cy_cp_rev,
+                   'cy_ytd_rev': cy_ytd_rev, 'cy_cp_rev_org': cy_cp_rev_org, 'cy_ytd_rev_org': cy_ytd_rev_org,
+                   'new_customers_added': new_customers_added, 'cy_cp_gp': 0, 'cy_ytd_gp': 0,
+                   'ar_balance': ar_balance, 'monthly_rev': monthly_rev, 'cy_cp_rev_contrib_pct': cy_cp_rev_contrib_pct,
+                   'cy_ytd_rev_contri_pct': cy_ytd_rev_contri_pct}
 
     return stats
 
@@ -831,7 +916,7 @@ def closing_date(row) -> datetime:
     Returns:
         datetime: last date of the month to which voucher becomes due
     """
-    ledger_code: int = row['Ledger Code']
+    ledger_code: int = row['Ledger_Code']
     if ledger_code in dCustomers.index:
         credit_days: int = int(dCustomers.loc[ledger_code, 'Credit_Days'])
         due_date = row['Voucher Date'] + timedelta(days=credit_days)

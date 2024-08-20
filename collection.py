@@ -32,6 +32,12 @@ df_collection: pd.DataFrame = pd.read_excel(io=PATH,
                                                 'Payment Voucher Number': 'str'},
                                             index_col='Invoice Number')
 
+fLogInv :pd.DataFrame = pd.read_excel(io=PATH,sheet_name='fLogInv',usecols=['Invoice Number','Sales Person Code','Customer Code'])
+# aurang_inv:list = fLogInv.loc[fLogInv['Sales Person Code']=='NBNL0088','Invoice Number'].tolist()
+aurang_inv:list = fLogInv.loc[fLogInv['Customer Code'].isin(['C00174','C00225','CUS0010','CUS0781','CUS0041',
+                                                 'C00137','CUS0012','CUS0013','CUS0610','CUS0613',
+                                                 'C00182','C00210','C00164','C00222','CUS0630',
+                                                 'C00147','C00231','C00136','CUS0787','CUS0792','CUS0794']),'Invoice Number'].tolist()
 
 def receipts_recorded(df_gl: pd.DataFrame, df_collection: pd.DataFrame) -> pd.DataFrame:
     """Takes df_collection and df_gl as arguments. For each voucher that has either fully or partially settled,
@@ -47,7 +53,8 @@ def receipts_recorded(df_gl: pd.DataFrame, df_collection: pd.DataFrame) -> pd.Da
         pd.DataFrame: Payment history of each voucher. 
     """
     inv_filt = (df_gl['Transaction Type'].isin(VOUCHER_TYPES))
-    invoices_list: list = df_gl.loc[inv_filt, 'Voucher Number'].unique().tolist()
+    # invoices_list: list = df_gl.loc[inv_filt, 'Voucher Number'].unique().tolist()
+    invoices_list: list = [inv for inv in df_gl.loc[inv_filt, 'Voucher Number'].unique().tolist()if inv not in aurang_inv]
     # Payment Voucher Number, invoices that has not been paid at all
     df_collection: pd.DataFrame = df_collection.loc[df_collection['Payment Voucher Number'].notnull()]
     # out of total invoices raised for the whole period, the invoices that were either fully or partially settled. 
@@ -116,23 +123,12 @@ def already_collected(row) -> float:
     start_date: datetime = row['Due Date'].replace(day=1)
     period_filt = (df_already_collected['Due Date'] >= start_date) & (
             df_already_collected['Due Date'] <= row['Due Date'])
-    due_inv_list: list = list(set(df_already_collected.loc[period_filt, 'Voucher Number'].tolist()))
+    # due_inv_list: list = list(set(df_already_collected.loc[period_filt, 'Voucher Number'].tolist()))
+    due_inv_list: list = [inv for inv in list(set(df_already_collected.loc[period_filt, 'Voucher Number'].tolist())) if inv not in aurang_inv]
     collected_filt = (already_collected_receipts['Invoice_number'].isin(due_inv_list)) & (
             already_collected_receipts['Voucher_Date'] < start_date)
     amount: float = already_collected_receipts.loc[collected_filt, 'Credit'].sum()
     return amount
-
-
-def month_end_date(row) -> datetime:
-    """convert voucher date to month end date
-
-    Args:
-        row (_type_): a row in a dataframe
-
-    Returns:
-        datetime: last date of the month for a given voucher date
-    """
-    return row['Voucher_Date'] + relativedelta(day=31)
 
 
 receipts: pd.DataFrame = receipts_recorded(df_gl=df_gl, df_collection=df_collection)
@@ -142,9 +138,9 @@ already_collected_receipts: pd.DataFrame = receipts
 filt_collection = (receipts['Voucher_Date'] >= START_DATE) & (receipts['Voucher_Date'] <= END_DATE)
 receipts = receipts.loc[filt_collection]
 # convert collection date to last date of the month, so it can be grouped to know total collected per period.
-receipts.loc[:, 'Voucher_Date'] = receipts.apply(month_end_date, axis=1)
+receipts.loc[:,'Voucher_Date'] = receipts['Voucher_Date'].apply(lambda row:row + relativedelta(day=31))
 # uncomment below to get the detailed break up of actual collection
-# receipts.to_csv('receipts.csv')
+receipts.to_csv('receipts.csv')
 receipts = receipts.groupby(by=['Voucher_Date'], as_index=False)['Credit'].sum()
 receipts.rename(columns={'Voucher_Date': 'Due Date', 'Credit': 'Actual'}, inplace=True)
 # Reasons for Finance / Receipt total for a period not match with 'Actual' in this report
@@ -153,13 +149,16 @@ receipts.rename(columns={'Voucher_Date': 'Due Date', 'Credit': 'Actual'}, inplac
 # 3. Receipts that were not allocated to invoices are not part of this report.
 # for 3 above check fCollection/Invoice Number Contains RV/CN and Payment Date ->Blank
 
+# filt_net_rev = (df_gl['Voucher Date'] >= START_DATE) & (df_gl['Voucher Date'] <= END_DATE) & (
+#     df_gl['Transaction Type'].isin(VOUCHER_TYPES)) & (df_gl['Fourth Level Group Name'] == 'Assets')
 filt_net_rev = (df_gl['Voucher Date'] >= START_DATE) & (df_gl['Voucher Date'] <= END_DATE) & (
-    df_gl['Transaction Type'].isin(VOUCHER_TYPES)) & (df_gl['Fourth Level Group Name'] == 'Assets')
+    df_gl['Transaction Type'].isin(VOUCHER_TYPES)) & (df_gl['Fourth Level Group Name'] == 'Assets') & (~df_gl['Voucher Number'].isin(aurang_inv))
 df_gl = df_gl.loc[filt_net_rev]
 df_gl['Due Date'] = df_gl.apply(closing_date, axis=1)
 df_already_collected: pd.DataFrame = df_gl
 df_gl = df_gl.groupby(by=['Due Date'], as_index=False)['Debit Amount'].sum()
 df_gl['Already_Collected'] = df_gl.apply(already_collected, axis=1)
+df_gl.to_csv('Target.csv')
 df_gl['Debit Amount'] = df_gl['Debit Amount'] - df_gl['Already_Collected']
 df_gl.drop(columns=['Already_Collected'], inplace=True)
 df_gl = df_gl.loc[(df_gl['Due Date'] >= START_DATE) & (df_gl['Due Date'] <= END_DATE)]
