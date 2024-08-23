@@ -210,6 +210,30 @@ def preprocessing(data: dict) -> dict:
             'dCustomers': dCustomers, 'fCollection': fCollection, 'dJobs': dJobs}
 
 
+def coa_ordering(dCoAAdler: pd.DataFrame):
+    ledger_codes: list = sorted(set(int(str(i)[:7]) for i in dCoAAdler['Ledger_Code']))
+
+    account_groups: dict = {}
+    for group_name in set(i for i in dCoAAdler['First_Level_Group_Name']):
+        pos: int = ledger_codes.index(
+            int(str(dCoAAdler.loc[(dCoAAdler['First_Level_Group_Name'] == group_name), 'Ledger_Code'].iloc[0])[:7]))
+        account_groups[group_name] = pos
+
+    rev_group = ledger_codes.index(
+        int(str(sorted(dCoAAdler.loc[dCoAAdler['Third_Level_Group_Name'] == 'Direct Income', 'Ledger_Code'])[-1])[:7]))
+    gp_group = ledger_codes.index(
+        int(str(sorted(dCoAAdler.loc[dCoAAdler['Third_Level_Group_Name'] == 'Cost of Sales', 'Ledger_Code'])[-1])[:7]))
+    oh_group = ledger_codes.index(
+        int(str(sorted(dCoAAdler.loc[dCoAAdler['Fourth_Level_Group_Name'] == 'Expenses', 'Ledger_Code'])[-1])[:7]))
+    account_groups['Total Revenue'] = rev_group + 0.1
+    account_groups['Gross Profit'] = gp_group + 0.1
+    account_groups['Other Revenue'] = gp_group + 0.2
+    account_groups['Total Overhead'] = oh_group + 0.1
+    account_groups['Net Profit'] = oh_group + 0.2
+    sorted_data = dict(sorted(account_groups.items(), key=lambda item: item[1]))
+    return sorted_data
+
+
 def empctc(row, dEmployee: pd.DataFrame) -> float:
     policy: str = dEmployee.loc[(dEmployee['Employee_Code'] == row['Employee_Code']), 'leave_policy']
     basic: float = dEmployee.loc[(dEmployee['Employee_Code'] == row['Employee_Code']), 'ba']
@@ -1006,7 +1030,7 @@ def collection() -> pd.DataFrame:
                                        join='outer').reset_index()
 
 
-def topfive(fInvoices: pd.DataFrame, end_date: datetime, mode: str, div: str) -> pd.DataFrame:
+def topcustomers(fInvoices: pd.DataFrame, end_date: datetime, mode: str, div: str, type: str, cnt: int) -> pd.DataFrame:
     if mode.lower() == 'month':
         start_date: datetime = datetime(
             year=end_date.year, month=end_date.month, day=1)
@@ -1020,12 +1044,13 @@ def topfive(fInvoices: pd.DataFrame, end_date: datetime, mode: str, div: str) ->
     elif div.lower() == 'elv':
         pattern = 'ORD|CRD'
     else:
-        raise ValueError(f'Invalid mode{div}')
+        raise ValueError(f'Invalid div{div}')
     topfivecustomers: pd.DataFrame = fInvoices.loc[
         (fInvoices['Invoice_Date'] >= start_date) & (fInvoices['Invoice_Date'] <= end_date) & (
+                    fInvoices['Type'] == type) & (
             fInvoices['Order_ID'].str.contains(pat=pattern)), [
             'Net_Amount', 'Cus_Name']].groupby('Cus_Name').sum().sort_values(by='Net_Amount', ascending=False).head(
-        5).reset_index().rename(columns={'Cus_Name': 'Customer', 'Net_Amount': 'Amount'})
+        cnt).reset_index().rename(columns={'Cus_Name': 'Customer', 'Net_Amount': 'Amount'})
     total_row: pd.DataFrame = pd.DataFrame(data={'Customer': ['Total'], 'Amount': [topfivecustomers['Amount'].sum()]})
     if not topfivecustomers.empty:
         topfivecustomers = pd.concat([topfivecustomers, total_row], ignore_index=True)
@@ -1561,6 +1586,125 @@ for salesperson in salesperson_list:
     tbl_salesman_gp.style = 'Light Grid Accent 3'
     document.add_page_break()
 
+fig_rev, ((cp_in_guard, cp_in_elv), (cp_ex_guard, cp_ex_elv), (ytd_in_guard, ytd_in_elv),
+          (ytd_ex_guard, ytd_ex_elv)) = plt.subplots(nrows=4, ncols=2, figsize=(7, 10))  # w,l
+
+# rev_plots:list = [a for row in rev_axis for a in row]
+
+cp_in_guard_df: pd.DataFrame = topcustomers(fInvoices=fInvoices, end_date=end_date, mode='month', div='guarding',
+                                            type='Related', cnt=5)
+cp_in_elv_df: pd.DataFrame = topcustomers(fInvoices=fInvoices, end_date=end_date, mode='month', div='elv',
+                                          type='Related', cnt=5)
+cp_ex_guard_df: pd.DataFrame = topcustomers(fInvoices=fInvoices, end_date=end_date, mode='month', div='guarding',
+                                            type='Market', cnt=5)
+cp_ex_elv_df: pd.DataFrame = topcustomers(fInvoices=fInvoices, end_date=end_date, mode='month', div='elv',
+                                          type='Market', cnt=5)
+ytd_in_guard_df: pd.DataFrame = topcustomers(fInvoices=fInvoices, end_date=end_date, mode='ytd', div='guarding',
+                                             type='Related', cnt=5)
+ytd_in_elv_df: pd.DataFrame = topcustomers(fInvoices=fInvoices, end_date=end_date, mode='ytd', div='elv',
+                                           type='Related', cnt=5)
+ytd_ex_guard_df: pd.DataFrame = topcustomers(fInvoices=fInvoices, end_date=end_date, mode='ytd', div='guarding',
+                                             type='Market', cnt=5)
+ytd_ex_elv_df: pd.DataFrame = topcustomers(fInvoices=fInvoices, end_date=end_date, mode='ytd', div='elv', type='Market',
+                                           cnt=5)
+
+heading_format = {'fontfamily': 'Georgia', 'color': 'c', 'fontweight': 'bold', 'fontsize': 10}
+
+cp_in_guard.set_title('Current Month Internal Guarding', loc='left', **heading_format)
+t1 = cp_in_guard.table(cellText=cp_in_guard_df.values, colLabels=cp_in_guard_df.columns, cellLoc='center', loc='best')
+cp_in_guard.axis('off')
+
+cp_in_elv.set_title('Current Month Internal ELV', loc='left', **heading_format)
+t2 = cp_in_elv.table(cellText=cp_in_elv_df.values, colLabels=cp_in_elv_df.columns, cellLoc='center', loc='best')
+cp_in_elv.axis('off')
+
+cp_ex_guard.set_title('Current Month External Guarding', loc='left', **heading_format)
+t3 = cp_ex_guard.table(cellText=cp_ex_guard_df.values, colLabels=cp_ex_guard_df.columns, cellLoc='center', loc='best')
+cp_ex_guard.axis('off')
+
+cp_ex_elv.set_title('Current Month External ELV', loc='left', **heading_format)
+t4 = cp_ex_elv.table(cellText=cp_ex_elv_df.values, colLabels=cp_ex_elv_df.columns, cellLoc='center', loc='best')
+cp_ex_elv.axis('off')
+
+ytd_in_guard.set_title('Year to Date Internal Guarding', loc='left', **heading_format)
+t5 = ytd_in_guard.table(cellText=ytd_in_guard_df.values, colLabels=ytd_in_guard_df.columns, cellLoc='center',
+                        loc='best')
+ytd_in_guard.axis('off')
+
+ytd_in_elv.set_title('Year to Date Internal ELV', loc='left', **heading_format)
+t6 = ytd_in_elv.table(cellText=ytd_in_elv_df.values, colLabels=ytd_in_elv_df.columns, cellLoc='center', loc='best')
+ytd_in_elv.axis('off')
+
+ytd_ex_guard.set_title('Year to Date External Guarding', loc='left', **heading_format)
+t7 = ytd_ex_guard.table(cellText=ytd_ex_guard_df.values, colLabels=ytd_ex_guard_df.columns, cellLoc='center',
+                        loc='best')
+ytd_ex_guard.axis('off')
+
+ytd_ex_elv.set_title('Year to Date External ELV', loc='left', **heading_format)
+t8 = ytd_ex_elv.table(cellText=ytd_ex_elv_df.values, colLabels=ytd_ex_elv_df.columns, cellLoc='center', loc='best')
+ytd_ex_elv.axis('off')
+
+rev_plots: list = [t1, t2, t3, t4, t5, t6, t7, t8]
+
+for current_plot in rev_plots:
+    for key, cell in current_plot.get_celld().items():
+        if key[0] == 0:
+            cell.set_fontsize(50)  # Set font size for header
+            cell.set_text_props(fontfamily='sans-serif', fontweight='bold')  # Set font name for header
+        else:
+            cell.set_fontsize(30)  # Set font size for data cells
+plt.tight_layout()
+
+rev_buf = BytesIO()
+plt.tight_layout()
+plt.savefig(rev_buf, format='png')
+plt.close(fig_rev)
+rev_buf.seek(0)
+doc.add_picture(rev_buf)
+
+document.add_page_break()
+
+fig_cha_rev, ((cp_inc, cp_dec), (py_inc, py_dec)) = plt.subplots(nrows=2, ncols=2)
+
+inc_pp: pd.DataFrame = revenue_change(fInvoices=fInvoices, end_date=end_date, mode='cypp', order=True)
+dec_pp: pd.DataFrame = revenue_change(fInvoices=fInvoices, end_date=end_date, mode='cypp', order=False)
+inc_py: pd.DataFrame = revenue_change(fInvoices=fInvoices, end_date=end_date, mode='pycp', order=True)
+dec_py: pd.DataFrame = revenue_change(fInvoices=fInvoices, end_date=end_date, mode='pycp', order=False)
+
+cp_inc.set_title('Top 5 Customers with Increased\nRevenue compared to previous month', loc='left', **heading_format)
+t1 = cp_inc.table(cellText=inc_pp.values, colLabels=inc_pp.columns, cellLoc='center', loc='best')
+cp_inc.axis('off')
+
+cp_dec.set_title('Top 5 Customers with Decreased\nRevenue compared to previous month', loc='left', **heading_format)
+t2 = cp_dec.table(cellText=dec_pp.values, colLabels=dec_pp.columns, cellLoc='center', loc='best')
+cp_dec.axis('off')
+
+py_inc.set_title('Top 5 Customers with Increased\nRevenue compared to previouse year', loc='left', **heading_format)
+t3 = py_inc.table(cellText=inc_py.values, colLabels=inc_py.columns, cellLoc='center', loc='best')
+py_inc.axis('off')
+
+py_dec.set_title('Top 5 Customers with Decreased\nRevenue compared to previous year', loc='left', **heading_format)
+t4 = py_dec.table(cellText=dec_py.values, colLabels=dec_py.columns, cellLoc='center', loc='best')
+py_dec.axis('off')
+
+rev_cha_plots: list = [t1, t2, t3, t4]
+
+for current_plot in rev_cha_plots:
+    for key, cell in current_plot.get_celld().items():
+        if key[0] == 0:
+            cell.set_fontsize(50)  # Set font size for header
+            cell.set_text_props(fontfamily='sans-serif', fontweight='bold')  # Set font name for header
+        else:
+            cell.set_fontsize(30)  # Set font size for data cells
+plt.tight_layout()
+rev_cha_buf = BytesIO()
+plt.tight_layout()
+plt.savefig(rev_cha_buf, format='png')
+plt.close(fig_cha_rev)
+rev_cha_buf.seek(0)
+doc.add_picture(rev_cha_buf)
+
+document.add_page_break()
 document.core_properties.author = "Nadun Jayathunga"
 document.core_properties.keywords = ("Chief Accountant\nNasser Bin Nawaf and Partners Holdings "
                                      "W.L.L\nE-mail\tnjayathunga@nbn.qa\nTelephone\t+974 4403 0407")
