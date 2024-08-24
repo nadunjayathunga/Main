@@ -6,10 +6,12 @@ import matplotlib.pyplot as plt
 from dateutil.relativedelta import relativedelta
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Pt
+from docx.shared import Pt,RGBColor,Cm
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx2pdf import convert
 from io import BytesIO
-from data import company_data, company_info
+from data import company_data, company_info,doc_styles,table_style
 import statistics
 import sys
 
@@ -210,7 +212,8 @@ def preprocessing(data: dict) -> dict:
             'dCustomers': dCustomers, 'fCollection': fCollection, 'dJobs': dJobs}
 
 
-def coa_ordering(dCoAAdler: pd.DataFrame):
+def coa_ordering(dCoAAdler: pd.DataFrame)->list:
+    dCoAAdler.reset_index(inplace=True)
     ledger_codes: list = sorted(set(int(str(i)[:7]) for i in dCoAAdler['Ledger_Code']))
 
     account_groups: dict = {}
@@ -232,6 +235,76 @@ def coa_ordering(dCoAAdler: pd.DataFrame):
     account_groups['Net Profit'] = oh_group + 0.2
     sorted_data = dict(sorted(account_groups.items(), key=lambda item: item[1]))
     return sorted_data
+
+
+def apply_style_properties(run, properties):
+    if 'bold' in properties:
+        run.bold = properties['bold']
+    if 'size' in properties:
+        run.font.size = Pt(properties['size'])
+    if 'name' in properties:
+        run.font.name = properties['name']
+    if 'color' in properties:
+        run.font.color.rgb = RGBColor(*properties['color'])
+
+
+def style_picker(name:str)->dict:
+    return [i[name] for i in doc_styles if name in i][0]
+
+
+def table_formatter(table_name, style_name: dict, special: list):
+    # Set the table style
+    table_name.style = 'Table Grid'
+    
+    # Get the style configuration
+    style = table_style[style_name]
+    
+    for element in ['th', 'td']:
+        if element == 'th':
+            # Format header cells
+            for th_row in table_name.rows[0].cells:
+                for paragraph in th_row.paragraphs:
+                    run = paragraph.runs[0]
+                    run.font.size = Pt(style[f'{element}_style']['font_size'])
+                    run.font.name = style[f'{element}_style']['font_name']
+                    run.font.color.rgb = RGBColor(*style[f'{element}_style']['font_color'])
+                    run.bold = style[f'{element}_style']['bold']
+                
+                # Set header cell background color
+                cell_xml_element = th_row._tc
+                table_cell_properties = cell_xml_element.get_or_add_tcPr()
+                shade_obj = OxmlElement('w:shd')
+                shade_obj.set(qn('w:fill'), style[f'{element}_style']['cell_color'])
+                table_cell_properties.append(shade_obj)
+        
+        else:
+            # Format table data cells
+            for row_index in range(1, len(table_name.rows)):
+                row_has_special = False
+                
+                # Check if any cell in the row meets the special criterion
+                for cell in table_name.rows[row_index].cells:
+                    if cell.text.strip() in special:
+                        row_has_special = True
+                        break
+                
+                # Apply formatting to the entire row if a special cell is found
+                for cell in table_name.rows[row_index].cells:
+                    cell_style = style[f'{element}_sp_style'] if row_has_special else style[f'{element}_style']
+                    
+                    for paragraph in cell.paragraphs:
+                        for run in paragraph.runs:
+                            run.font.size = Pt(cell_style['font_size'])
+                            run.font.name = cell_style['font_name']
+                            run.font.color.rgb = RGBColor(*cell_style['font_color'])
+                            run.bold = cell_style['bold']
+                    
+                    # Set cell background color
+                    cell_xml_element = cell._tc
+                    table_cell_properties = cell_xml_element.get_or_add_tcPr()
+                    shade_obj = OxmlElement('w:shd')
+                    shade_obj.set(qn('w:fill'), cell_style['cell_color'])
+                    table_cell_properties.append(shade_obj)
 
 
 def empctc(row, dEmployee: pd.DataFrame) -> float:
@@ -1091,6 +1164,15 @@ def revenue_change(fInvoices: pd.DataFrame, end_date: datetime, mode: str, order
     return revenue_period
 
 
+def number_format(num):
+    if num == 0:
+        return "-"
+    elif num >= 0:
+        return f'{num:,.0f}'
+    else:
+        return f'({abs(num):,.0f})'
+
+
 df_pl: dict = profitandloss(basic_pl=True, data=merged, start_date=start_date, end_date=end_date, full_pl=True)
 cy_cp_basic: pd.DataFrame = df_pl['df_basic']['cy_cp_basic']
 cy_ytd_basic: pd.DataFrame = df_pl['df_basic']['cy_ytd_basic']
@@ -1100,15 +1182,26 @@ py_ytd_basic: pd.DataFrame = df_pl['df_basic']['py_ytd_basic']
 cy_cp_basic_bud: pd.DataFrame = df_pl['df_basic']['cy_cp_basic_bud']
 cy_ytd_basic_bud: pd.DataFrame = df_pl['df_basic']['cy_ytd_basic_bud']
 
+sort_order:list = coa_ordering(dCoAAdler=dCoAAdler)
 cp_month: pd.DataFrame = pd.concat(
     [cy_cp_basic.set_index('Description'), cy_pp_basic.set_index('Description'), py_cp_basic.set_index('Description'),
      cy_cp_basic_bud.set_index('Description')],
     axis=1, join='outer').reset_index()
+cp_month.fillna(value=0,inplace=True)
+cp_month['Description'] = pd.Categorical(cp_month['Description'],categories=[k for k in sort_order.keys()],ordered=True)
+cp_month.sort_values(by='Description',inplace=True)
 
 document = Document()
 doc = first_page(document=document, report_date=end_date)
 document.add_page_break()
+
+cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Services W.L.L')
+apply_style_properties(cy_cp_pl_company_title,style_picker(name='company_title'))
+cy_cp_pl_report_title = document.add_paragraph().add_run('Profit & Loss for the current period')
+apply_style_properties(cy_cp_pl_report_title,style_picker(name='report_title'))
+
 tbl_month_basic = document.add_table(rows=1, cols=5)
+tbl_month_basic.columns[0].width = Cm(7.5)
 heading_cells = tbl_month_basic.rows[0].cells
 heading_cells[0].text = 'Description'
 heading_cells[1].text = 'Current Month'
@@ -1116,15 +1209,17 @@ heading_cells[2].text = 'Previous Month'
 heading_cells[3].text = 'SPLY'
 heading_cells[4].text = 'Budget'
 
+
 for _, row in cp_month.iterrows():
     cells = tbl_month_basic.add_row().cells
     cells[0].text = str(row['Description'])
-    cells[1].text = f"{row.iloc[1]:,.0f}" if row.iloc[1] >= 0 else f"({abs(row.iloc[1]):,.0f})"
-    cells[2].text = f"{row.iloc[2]:,.0f}" if row.iloc[2] >= 0 else f"({abs(row.iloc[2]):,.0f})"
-    cells[3].text = f"{row.iloc[3]:,.0f}" if row.iloc[3] >= 0 else f"({abs(row.iloc[3]):,.0f})"
-    cells[4].text = f"{row.iloc[4]:,.0f}" if row.iloc[4] >= 0 else f"({abs(row.iloc[4]):,.0f})"
+    cells[1].text = number_format(row.iloc[1])
+    cells[2].text = number_format(row.iloc[2]) 
+    cells[3].text = number_format(row.iloc[3]) 
+    cells[4].text = number_format(row.iloc[4]) 
 
-tbl_month_basic.style = 'Light Grid Accent 1'
+plheads: list = ['Total Revenue','Gross Profit','Total Overhead','Net Profit']
+table_formatter(table_name=tbl_month_basic,style_name='table_style_1',special=plheads)
 document.add_page_break()
 
 cy_cp_full: pd.DataFrame = df_pl['df_full']['cy_cp_full']
