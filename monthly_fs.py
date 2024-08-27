@@ -6,18 +6,21 @@ import matplotlib.pyplot as plt
 from dateutil.relativedelta import relativedelta
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Pt,RGBColor,Cm
+from docx.enum.section import WD_ORIENT, WD_SECTION
+from docx.shared import Pt, RGBColor, Cm
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx2pdf import convert
 from io import BytesIO
-from data import company_data, company_info,doc_styles,table_style
+from data import company_data, company_info, doc_styles, table_style
 import statistics
+import numpy as np
 import sys
 
 company_id = 0
 end_date: datetime = datetime(year=2024, month=7, day=31)
 start_date: datetime = datetime(year=end_date.year - 1, month=1, day=1)
+sys_cut_off: datetime = datetime(year=2020, month=11, day=1)
 VOUCHER_TYPES: list = ['Project Invoice',
                        'Contract Invoice', 'SERVICE INVOICE', 'Sales Invoice']
 
@@ -70,7 +73,6 @@ def data_sources(company_id: int) -> dict:
                                              sheet_name='dContracts')
     dOrderAMC: pd.DataFrame = pd.read_excel(io=path, usecols=['Order_ID', 'Customer_Code', 'Employee_Code'],
                                             sheet_name='dOrderAMC')
-
     return {'fGL': fGL, 'dEmployee': dEmployee, 'dCoAAdler': dCoAAdler, 'fOutSourceInv': fOutSourceInv,
             'fAMCInv': fAMCInv, 'fProInv': fProInv, 'fCreditNote': fCreditNote, 'dCustomers': dCustomers,
             'fBudget': fBudget, 'fCollection': fCollection, 'dContracts': dContracts, 'dCusOrder': dCusOrder,
@@ -125,6 +127,8 @@ def receipts_recorded(data: pd.DataFrame) -> pd.DataFrame:
     multidates: pd.DataFrame = data.loc[~data['voucher_date'].isna() & data['voucher_date'].str.contains(pat=',')]
     data['voucher_date'] = pd.to_datetime(data['voucher_date'], errors='coerce')
     singledate: pd.DataFrame = data.loc[~data['voucher_date'].isna()]
+    singledate[['voucher_number', 'voucher_amount']] = singledate['voucher_number'].apply(
+        lambda name: pd.Series(name.split("-", 1)))
 
     final_collection_df: pd.DataFrame = pd.DataFrame(columns=[
         'invoice_number', 'ledger_code', 'invoice_date', 'invoice_amount',
@@ -149,9 +153,11 @@ def receipts_recorded(data: pd.DataFrame) -> pd.DataFrame:
             data={'invoice_number': invoice_number, 'ledger_code': ledger_code, 'invoice_date': invoice_date,
                   'invoice_amount': invoice_amount,
                   'voucher_number': voucher_number, 'voucher_amount': voucher_amount, 'voucher_date': voucher_date})
-        final_collection_df = pd.concat([final_collection_df, collection_df])
-    final_collection_df = pd.concat([final_collection_df, nulldf, singledate])
+        final_collection_df = pd.concat(i for i in [final_collection_df, collection_df] if not i.empty)
+    final_collection_df = pd.concat(i for i in [final_collection_df, nulldf, singledate] if not i.empty)
     final_collection_df['voucher_date'] = pd.to_datetime(final_collection_df['voucher_date'], errors='coerce')
+    final_collection_df['voucher_amount'].fillna(value=0, inplace=True)
+    final_collection_df['voucher_amount'] = pd.to_numeric(final_collection_df['voucher_amount'])
     return final_collection_df
 
 
@@ -207,33 +213,72 @@ def preprocessing(data: dict) -> dict:
     fBudget = pd.merge(left=fBudget, right=dCoAAdler,
                        on='Ledger_Code', how='left')
     fBudget['Bussiness Unit Name'] = 'GUARDING-ESS'
+    fBudget.loc[fBudget['Fourth_Level_Group_Name'] == 'Expenses', 'Amount'] *= -1
     fCollection = receipts_recorded(data=fCollection)
     return {'fGL': fGL, 'dEmployee': dEmployee, 'dCoAAdler': dCoAAdler, 'fInvoices': fInvoices, 'fBudget': fBudget,
             'dCustomers': dCustomers, 'fCollection': fCollection, 'dJobs': dJobs}
 
 
-def coa_ordering(dCoAAdler: pd.DataFrame)->list:
-    dCoAAdler.reset_index(inplace=True)
-    ledger_codes: list = sorted(set(int(str(i)[:7]) for i in dCoAAdler['Ledger_Code']))
+def coa_ordering(dCoAAdler: pd.DataFrame) -> list:
+    other_income_df: pd.DataFrame = dCoAAdler.loc[dCoAAdler['Third_Level_Group_Name'] == 'Indirect Income'].copy()
+    coa_df: pd.DataFrame = dCoAAdler.loc[dCoAAdler['Third_Level_Group_Name'] != 'Indirect Income'].copy()
 
-    account_groups: dict = {}
-    for group_name in set(i for i in dCoAAdler['First_Level_Group_Name']):
-        pos: int = ledger_codes.index(
-            int(str(dCoAAdler.loc[(dCoAAdler['First_Level_Group_Name'] == group_name), 'Ledger_Code'].iloc[0])[:7]))
-        account_groups[group_name] = pos
+    coa_df.sort_index(inplace=True)
+    coa_df.reset_index(inplace=True)
+    coa_list: list = coa_df['Ledger_Code'].tolist()
 
-    rev_group = ledger_codes.index(
-        int(str(sorted(dCoAAdler.loc[dCoAAdler['Third_Level_Group_Name'] == 'Direct Income', 'Ledger_Code'])[-1])[:7]))
-    gp_group = ledger_codes.index(
-        int(str(sorted(dCoAAdler.loc[dCoAAdler['Third_Level_Group_Name'] == 'Cost of Sales', 'Ledger_Code'])[-1])[:7]))
-    oh_group = ledger_codes.index(
-        int(str(sorted(dCoAAdler.loc[dCoAAdler['Fourth_Level_Group_Name'] == 'Expenses', 'Ledger_Code'])[-1])[:7]))
-    account_groups['Total Revenue'] = rev_group + 0.1
-    account_groups['Gross Profit'] = gp_group + 0.1
-    account_groups['Other Revenue'] = gp_group + 0.2
-    account_groups['Total Overhead'] = oh_group + 0.1
-    account_groups['Net Profit'] = oh_group + 0.2
-    sorted_data = dict(sorted(account_groups.items(), key=lambda item: item[1]))
+    other_income_df.sort_index(inplace=True)
+    other_income_df.reset_index(inplace=True)
+    other_inc: list = other_income_df['Ledger_Code'].tolist()
+
+    coa_sort_order: dict = coa_df['Ledger_Name'].reset_index().reset_index().set_index(keys='Ledger_Name')[
+        'index'].to_dict()
+
+    first_level: np.ndarray = coa_df['First_Level_Group_Name'].unique()
+    for i in first_level:
+        coa_sort_order[i] = coa_list.index(
+            coa_df.loc[(coa_df['First_Level_Group_Name'] == i), 'Ledger_Code'].max()) + 0.1
+    second_level: np.ndarray = coa_df['Second_Level_Group_Name'].unique()
+    for i in second_level:
+        coa_sort_order[i] = coa_list.index(
+            coa_df.loc[(coa_df['Second_Level_Group_Name'] == i), 'Ledger_Code'].max()) + 0.2
+    third_level: np.ndarray = coa_df['Third_Level_Group_Name'].unique()
+    for i in third_level:
+        coa_sort_order[i] = coa_list.index(
+            coa_df.loc[(coa_df['Third_Level_Group_Name'] == i), 'Ledger_Code'].max()) + 0.3
+    forth_level: np.ndarray = coa_df['Fourth_Level_Group_Name'].unique()
+    for i in forth_level:
+        coa_sort_order[i] = coa_list.index(
+            coa_df.loc[(coa_df['Fourth_Level_Group_Name'] == i), 'Ledger_Code'].max()) + 0.4
+    coa_sort_order['Gross Profit'] = coa_sort_order['Cost of Sales'] + 0.1
+
+    for i, j in enumerate(other_inc):
+        coa_sort_order[other_income_df.loc[other_income_df['Ledger_Code'] == j, 'Ledger_Name'].iloc[0]] = \
+            coa_sort_order['Gross Profit'] + i / 10
+    first_level_other_inc: np.ndarray = other_income_df['First_Level_Group_Name'].unique()
+    for i in first_level_other_inc:
+        coa_sort_order[i] = coa_sort_order[other_income_df.loc[other_income_df['Ledger_Code'] == other_income_df.loc[
+            (other_income_df['First_Level_Group_Name'] == i), 'Ledger_Code'].max(), 'Ledger_Name'].iloc[0]] + 0.1
+    second_level_other_inc: np.ndarray = other_income_df['Second_Level_Group_Name'].unique()
+    for i in second_level_other_inc:
+        coa_sort_order[i] = coa_sort_order[other_income_df.loc[other_income_df['Ledger_Code'] == other_income_df.loc[
+            (other_income_df['Second_Level_Group_Name'] == i), 'Ledger_Code'].max(), 'Ledger_Name'].iloc[0]] + 0.2
+    third_level_other_inc: np.ndarray = other_income_df['Third_Level_Group_Name'].unique()
+    for i in third_level_other_inc:
+        coa_sort_order[i] = coa_sort_order[other_income_df.loc[other_income_df['Ledger_Code'] == other_income_df.loc[
+            (other_income_df['Third_Level_Group_Name'] == i), 'Ledger_Code'].max(), 'Ledger_Name'].iloc[0]] + 0.3
+    forth_level_other_inc: np.ndarray = other_income_df['Fourth_Level_Group_Name'].unique()
+    for i in forth_level_other_inc:
+        coa_sort_order[i] = coa_sort_order[other_income_df.loc[other_income_df['Ledger_Code'] == other_income_df.loc[
+            (other_income_df['Fourth_Level_Group_Name'] == i), 'Ledger_Code'].max(), 'Ledger_Name'].iloc[0]] + 0.4
+    coa_sort_order['Total Overhead'] = coa_sort_order['Expenses'] + 0.1
+    coa_sort_order['Net Profit'] = coa_sort_order['Expenses'] + 0.1
+
+    value = coa_sort_order.pop('Direct Income')
+    coa_sort_order['Total Revenue'] = value
+
+    sorted_data = dict(sorted(coa_sort_order.items(), key=lambda item: item[1]))
+
     return sorted_data
 
 
@@ -248,17 +293,17 @@ def apply_style_properties(run, properties):
         run.font.color.rgb = RGBColor(*properties['color'])
 
 
-def style_picker(name:str)->dict:
+def style_picker(name: str) -> dict:
     return [i[name] for i in doc_styles if name in i][0]
 
 
 def table_formatter(table_name, style_name: dict, special: list):
     # Set the table style
     table_name.style = 'Table Grid'
-    
+
     # Get the style configuration
     style = table_style[style_name]
-    
+
     for element in ['th', 'td']:
         if element == 'th':
             # Format header cells
@@ -269,36 +314,36 @@ def table_formatter(table_name, style_name: dict, special: list):
                     run.font.name = style[f'{element}_style']['font_name']
                     run.font.color.rgb = RGBColor(*style[f'{element}_style']['font_color'])
                     run.bold = style[f'{element}_style']['bold']
-                
+
                 # Set header cell background color
                 cell_xml_element = th_row._tc
                 table_cell_properties = cell_xml_element.get_or_add_tcPr()
                 shade_obj = OxmlElement('w:shd')
                 shade_obj.set(qn('w:fill'), style[f'{element}_style']['cell_color'])
                 table_cell_properties.append(shade_obj)
-        
+
         else:
             # Format table data cells
             for row_index in range(1, len(table_name.rows)):
                 row_has_special = False
-                
+
                 # Check if any cell in the row meets the special criterion
                 for cell in table_name.rows[row_index].cells:
                     if cell.text.strip() in special:
                         row_has_special = True
                         break
-                
+
                 # Apply formatting to the entire row if a special cell is found
                 for cell in table_name.rows[row_index].cells:
                     cell_style = style[f'{element}_sp_style'] if row_has_special else style[f'{element}_style']
-                    
+
                     for paragraph in cell.paragraphs:
                         for run in paragraph.runs:
                             run.font.size = Pt(cell_style['font_size'])
                             run.font.name = cell_style['font_name']
                             run.font.color.rgb = RGBColor(*cell_style['font_color'])
                             run.bold = cell_style['bold']
-                    
+
                     # Set cell background color
                     cell_xml_element = cell._tc
                     table_cell_properties = cell_xml_element.get_or_add_tcPr()
@@ -367,7 +412,7 @@ def profitandlossheads(data: pd.DataFrame, start_date: datetime, end_date: datet
 
 def profitandloss(data: pd.DataFrame, start_date: datetime, end_date: datetime, basic_pl: bool = False,
                   mid_pl: bool = False, full_pl: bool = False,
-                  bu: list = list(set(fGL['Bussiness Unit Name'].tolist()))) -> dict:
+                  bu: list = fGL['Bussiness Unit Name'].unique()) -> dict:
     df_basic: pd.DataFrame = pd.DataFrame(data={'Voucher Date': [], 'Amount': []})
     df_basic_bud: pd.DataFrame = pd.DataFrame(data={'Voucher Date': [], 'Amount': []})
     df_mid: pd.DataFrame = pd.DataFrame(data={'Voucher Date': [], 'Amount': []})
@@ -391,7 +436,6 @@ def profitandloss(data: pd.DataFrame, start_date: datetime, end_date: datetime, 
             by=['Voucher Date', 'First_Level_Group_Name'], as_index=False).sum().rename(
             columns={'First_Level_Group_Name': 'Description'})
         indirect_inc_brief = indirect_inc_brief.loc[indirect_inc_brief['Amount'] != 0]
-
         indirect_inc_filt_bud = fBudget['Third_Level_Group_Name'].isin(['Indirect Income']) & (
                 fBudget['Voucher Date'] >= start) & (fBudget['Voucher Date'] <= end) & (
                                     fBudget['Bussiness Unit Name'].isin(bu))
@@ -401,19 +445,19 @@ def profitandloss(data: pd.DataFrame, start_date: datetime, end_date: datetime, 
             columns={'First_Level_Group_Name': 'Description'})
         indirect_inc_brief_bud = indirect_inc_brief_bud.loc[indirect_inc_brief_bud['Amount'] != 0]
 
-        overhead_brief_filt = data['Third_Level_Group_Name'].isin(['Overhead', 'Finance Cost']) & (
+        overhead_brief_filt = (data['Third_Level_Group_Name'].isin(['Overhead', 'Finance Cost'])) & (
                 data['Voucher Date'] >= start) & (data['Voucher Date'] <= end) & (
                                   data['Bussiness Unit Name'].isin(bu))
-        overhead_brief_filt_bud = fBudget['Third_Level_Group_Name'].isin(['Overhead', 'Finance Cost']) & (
-                fBudget['Voucher Date'] >= start) & (data['Voucher Date'] <= end) & (
+        overhead_brief_filt_bud = (fBudget['Third_Level_Group_Name'].isin(['Overhead', 'Finance Cost'])) & (
+                fBudget['Voucher Date'] >= start) & (fBudget['Voucher Date'] <= end) & (
                                       fBudget['Bussiness Unit Name'].isin(bu))
         summary_actual: pd.DataFrame = profitandlossheads(data=data, start_date=start, end_date=end, bu=bu)
         summary_budget: pd.DataFrame = profitandlossheads(data=fBudget, start_date=start, end_date=end, bu=bu)
+        trade_account_filt = data['Third_Level_Group_Name'].isin(['Cost of Sales', 'Direct Income']) & (
+                data['Voucher Date'] >= start) & (data['Voucher Date'] <= end) & (
+                                 data['Bussiness Unit Name'].isin(bu))
         # basic version
         if basic_pl:
-            trade_account_filt = data['Third_Level_Group_Name'].isin(['Cost of Sales', 'Direct Income']) & (
-                    data['Voucher Date'] >= start) & (data['Voucher Date'] <= end) & (
-                                     data['Bussiness Unit Name'].isin(bu))
             trade_account_filt_bud = fBudget['Third_Level_Group_Name'].isin(['Cost of Sales', 'Direct Income']) & (
                     fBudget['Voucher Date'] >= start) & (fBudget['Voucher Date'] <= end) & (
                                          fBudget['Bussiness Unit Name'].isin(bu))
@@ -424,7 +468,7 @@ def profitandloss(data: pd.DataFrame, start_date: datetime, end_date: datetime, 
             overhead_brief_basic_bud: pd.DataFrame = fBudget.loc[
                 overhead_brief_filt_bud, ['First_Level_Group_Name', 'Voucher Date', 'Amount']].groupby(
                 by=['Voucher Date', 'First_Level_Group_Name'], as_index=False).sum().rename(
-                columns={'First_Level_Group_Name': 'Description'}, inplace=True)
+                columns={'First_Level_Group_Name': 'Description'})
             trade_account_brief: pd.DataFrame = data.loc[
                 trade_account_filt, ['First_Level_Group_Name', 'Voucher Date', 'Amount']].groupby(
                 by=['Voucher Date', 'First_Level_Group_Name'], as_index=False).sum().rename(
@@ -434,15 +478,15 @@ def profitandloss(data: pd.DataFrame, start_date: datetime, end_date: datetime, 
                 by=['Voucher Date', 'First_Level_Group_Name'], as_index=False).sum().rename(
                 columns={'First_Level_Group_Name': 'Description'})
             basic: pd.DataFrame = pd.concat(
-                [trade_account_brief, indirect_inc_brief, overhead_brief_basic]).rename(
+                i for i in [trade_account_brief, indirect_inc_brief, overhead_brief_basic] if not i.empty).rename(
                 columns={'First_Level_Group_Name': 'Description'})
             basic_bud: pd.DataFrame = pd.concat(
                 [trade_account_brief_bud, indirect_inc_brief_bud, overhead_brief_basic_bud]).rename(
                 columns={'First_Level_Group_Name': 'Description'})
             basic = basic.loc[basic['Amount'] != 0].set_index(keys='Description')
             basic_bud = basic_bud.loc[basic_bud['Amount'] != 0].set_index(keys='Description')
-            df_basic = pd.concat([basic, summary_actual, df_basic])
-            df_basic_bud = pd.concat([basic_bud, summary_budget, df_basic_bud])
+            df_basic = pd.concat(i for i in [basic, summary_actual, df_basic] if not i.empty)
+            df_basic_bud = pd.concat(i for i in [basic_bud, summary_budget, df_basic_bud] if not i.empty)
 
         # mid version
         if mid_pl:
@@ -473,9 +517,8 @@ def profitandloss(data: pd.DataFrame, start_date: datetime, end_date: datetime, 
 
         # full version
         if full_pl:
-            detailed_filt = data['Third_Level_Group_Name'].isin(
-                ['Indirect Income', 'Overhead', 'Finance Cost', 'Direct Income', 'Cost of Sales']) & (
-                                    data['Voucher Date'] >= start) & (data['Voucher Date'] <= end) & (
+            detailed_filt = data['Fourth_Level_Group_Name'].isin(['Income', 'Expenses']) & (
+                    data['Voucher Date'] >= start) & (data['Voucher Date'] <= end) & (
                                 data['Bussiness Unit Name'].isin(bu))
             detailed_filt_bud = fBudget['Third_Level_Group_Name'].isin(
                 ['Indirect Income', 'Overhead', 'Finance Cost', 'Direct Income', 'Cost of Sales']) & (
@@ -487,9 +530,8 @@ def profitandloss(data: pd.DataFrame, start_date: datetime, end_date: datetime, 
                 by=['Voucher Date', 'Ledger_Name'], as_index=False).sum().rename(columns={'Ledger_Name': 'Description'})
             full = full.loc[full['Amount'] != 0].set_index(keys='Description')
             full_bud = full_bud.loc[full_bud['Amount'] != 0].set_index(keys='Description')
-            df_full = pd.concat([df_full, summary_actual, full])
-            df_full_bud = pd.concat([df_full_bud, summary_budget, full_bud])
-
+            df_full = pd.concat(i for i in [df_full, summary_actual, full] if not i.empty)
+            df_full_bud = pd.concat(i for i in [df_full_bud, summary_budget, full_bud] if not i.empty)
     cy_cp_basic: pd.DataFrame = df_basic.loc[df_basic['Voucher Date'] == end_date].drop(
         columns=['Voucher Date']).reset_index().rename(columns={'index': 'Description'})
     cy_cp_basic_bud: pd.DataFrame = df_basic_bud.loc[df_basic_bud['Voucher Date'] == end_date].drop(
@@ -734,7 +776,8 @@ financial_periods_pl: list = sorted(list(
     reverse=True)
 plcombined: pd.DataFrame = pd.DataFrame()
 for f_year in financial_periods_pl:
-    pl: dict = profitandloss(data=merged, end_date=f_year, start_date=datetime(year=f_year.year, month=1, day=1),
+    pl: dict = profitandloss(data=merged, end_date=f_year,
+                             start_date=max(sys_cut_off, datetime(year=f_year.year, month=1, day=1)),
                              basic_pl=True)
     pl_period: pd.DataFrame = pl['df_basic']['cy_ytd_basic'].rename(columns={'Amount': f'{f_year.date()}'}).set_index(
         keys='Description')
@@ -805,7 +848,7 @@ def settlement_days(invoices: list) -> int:
 def cust_ageing(customer: str) -> pd.DataFrame:
     ledgers: list = dCustomers.loc[(dCustomers['Cus_Name'] == customer), 'Ledger_Code'].tolist()
     credit_days: int = int(dCustomers.loc[dCustomers['Cus_Name'].isin([customer]), 'Credit_Days'].iloc[0])
-    invoices: list = list(set(fCollection.loc[fCollection['ledger_code'].isin(ledgers), 'invoice_number'].tolist()))
+    invoices: np.ndarray = fCollection.loc[fCollection['ledger_code'].isin(ledgers), 'invoice_number'].unique()
     cust_soa: pd.DataFrame = fCollection.loc[(fCollection['invoice_number'].isin(invoices)), ['invoice_date',
                                                                                               'invoice_amount',
                                                                                               'voucher_amount',
@@ -831,7 +874,15 @@ def cust_ageing(customer: str) -> pd.DataFrame:
                     age_bracket_list.append(label)
                     break
     outstanding_df: pd.DataFrame = pd.DataFrame(
-        data={'Inv_Amount': inv_value_list, 'Age Bracket': age_bracket_list}).groupby(by='Age Bracket').sum()
+        data={'Amount': inv_value_list, 'Age Bracket': age_bracket_list}).groupby(by='Age Bracket').sum()
+    if not outstanding_df.empty:
+        outstanding_df.reset_index(inplace=True)
+        outstanding_df['Age Bracket'] = pd.Categorical(outstanding_df['Age Bracket'], categories=[i[1] for i in ranges],
+                                                       ordered=True)
+        outstanding_df.sort_values(by='Age Bracket', inplace=True)
+        outstanding_df.set_index(keys='Age Bracket', drop=True, inplace=True)
+    else:
+        outstanding_df
     return outstanding_df
 
 
@@ -901,11 +952,14 @@ def customer_ratios(customers: list, fInvoices: pd.DataFrame, end_date: datetime
                                         fInvoices.loc[(fInvoices['Invoice_Date'] <= end_date) & (
                                                 fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=1,
                                                                                       day=1)), 'Net_Amount'].sum() * 100
-        monthyly_rev: pd.DataFrame = fInvoices.loc[
+        monthly_rev: pd.DataFrame = fInvoices.loc[
             (fInvoices['Cus_Name'] == customer) & (fInvoices['Invoice_Date'] <= end_date) & (
                     fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=1, day=1)), ['Invoice_Date',
                                                                                                  'Net_Amount']].groupby(
-            by=['Invoice_Date']).sum().rename(columns={'Invoice_Date': 'Month', 'Net_Amount': 'Amount'})
+            by=['Invoice_Date']).sum()
+        monthly_rev.reset_index(inplace=True)
+        monthly_rev.rename(columns={'Invoice_Date': 'Month', 'Net_Amount': 'Amount'}, inplace=True)
+        monthly_rev.set_index(keys='Month', drop=True, inplace=True)
         ageing: pd.DataFrame = cust_ageing(customer=customer)
         last_sales_person: str = fInvoices.loc[(fInvoices['Invoice_Date'] <= end_date), 'Employee_Code'].tail(1).iloc[0]
         last_sales_person = dEmployee.loc[last_sales_person, 'Employee_Name']
@@ -925,7 +979,7 @@ def customer_ratios(customers: list, fInvoices: pd.DataFrame, end_date: datetime
             'cy_cp_rev_contrib_pct': f'{round(cy_cp_rev_contrib_pct, 1)}%',
             'cy_ytd_rev_contrib_pct': f'{round(cy_ytd_rev_contrib_pct, 1)}%',
             'cy_cp_roi': 0, 'customer_gp_ytd': 0,
-            'cy_ytd_roi': 0, 'monthyly_rev': monthyly_rev, 'remarks': 0}
+            'cy_ytd_roi': 0, 'monthly_rev': monthly_rev, 'remarks': 0}
         customer_info[customer] = stats
     return customer_info
 
@@ -1120,7 +1174,7 @@ def topcustomers(fInvoices: pd.DataFrame, end_date: datetime, mode: str, div: st
         raise ValueError(f'Invalid div{div}')
     topfivecustomers: pd.DataFrame = fInvoices.loc[
         (fInvoices['Invoice_Date'] >= start_date) & (fInvoices['Invoice_Date'] <= end_date) & (
-                    fInvoices['Type'] == type) & (
+                fInvoices['Type'] == type) & (
             fInvoices['Order_ID'].str.contains(pat=pattern)), [
             'Net_Amount', 'Cus_Name']].groupby('Cus_Name').sum().sort_values(by='Net_Amount', ascending=False).head(
         cnt).reset_index().rename(columns={'Cus_Name': 'Customer', 'Net_Amount': 'Amount'})
@@ -1173,6 +1227,33 @@ def number_format(num):
         return f'({abs(num):,.0f})'
 
 
+def plotting_period(end_date: datetime, months: int) -> datetime:
+    start_date: datetime = datetime(year=end_date.year, month=1, day=1)
+    delta = relativedelta(dt1=end_date, dt2=start_date)
+    period: int = delta.months + (delta.years * 12) + 1
+    if period < 6:
+        start_date = end_date - relativedelta(months=months - 1)
+        start_date = datetime(year=start_date.year, month=start_date.month, day=1)
+    else:
+        start_date
+    return start_date
+
+
+def change_orientation(doc, method):
+    current_section = doc.sections[-1]
+    new_section = document.add_section(WD_SECTION.NEW_PAGE)
+    if method == 'l':
+        new_width, new_height = current_section.page_height, current_section.page_width
+        new_section.orientation = WD_ORIENT.LANDSCAPE
+    else:
+        new_height, new_width, = current_section.page_width, current_section.page_height
+        new_section.orientation = WD_ORIENT.PORTRAIT
+    new_section.page_width = new_width
+    new_section.page_height = new_height
+
+    return new_section
+
+
 df_pl: dict = profitandloss(basic_pl=True, data=merged, start_date=start_date, end_date=end_date, full_pl=True)
 cy_cp_basic: pd.DataFrame = df_pl['df_basic']['cy_cp_basic']
 cy_ytd_basic: pd.DataFrame = df_pl['df_basic']['cy_ytd_basic']
@@ -1182,23 +1263,24 @@ py_ytd_basic: pd.DataFrame = df_pl['df_basic']['py_ytd_basic']
 cy_cp_basic_bud: pd.DataFrame = df_pl['df_basic']['cy_cp_basic_bud']
 cy_ytd_basic_bud: pd.DataFrame = df_pl['df_basic']['cy_ytd_basic_bud']
 
-sort_order:list = coa_ordering(dCoAAdler=dCoAAdler)
+sort_order: list = coa_ordering(dCoAAdler=dCoAAdler)
 cp_month: pd.DataFrame = pd.concat(
     [cy_cp_basic.set_index('Description'), cy_pp_basic.set_index('Description'), py_cp_basic.set_index('Description'),
      cy_cp_basic_bud.set_index('Description')],
     axis=1, join='outer').reset_index()
-cp_month.fillna(value=0,inplace=True)
-cp_month['Description'] = pd.Categorical(cp_month['Description'],categories=[k for k in sort_order.keys()],ordered=True)
-cp_month.sort_values(by='Description',inplace=True)
+cp_month.fillna(value=0, inplace=True)
+cp_month['Description'] = pd.Categorical(cp_month['Description'], categories=[k for k in sort_order.keys()],
+                                         ordered=True)
+cp_month.sort_values(by='Description', inplace=True)
 
 document = Document()
 doc = first_page(document=document, report_date=end_date)
 document.add_page_break()
 
 cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Services W.L.L')
-apply_style_properties(cy_cp_pl_company_title,style_picker(name='company_title'))
+apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
 cy_cp_pl_report_title = document.add_paragraph().add_run('Profit & Loss for the current period')
-apply_style_properties(cy_cp_pl_report_title,style_picker(name='report_title'))
+apply_style_properties(cy_cp_pl_report_title, style_picker(name='report_title'))
 
 tbl_month_basic = document.add_table(rows=1, cols=5)
 tbl_month_basic.columns[0].width = Cm(7.5)
@@ -1209,17 +1291,16 @@ heading_cells[2].text = 'Previous Month'
 heading_cells[3].text = 'SPLY'
 heading_cells[4].text = 'Budget'
 
-
 for _, row in cp_month.iterrows():
     cells = tbl_month_basic.add_row().cells
     cells[0].text = str(row['Description'])
     cells[1].text = number_format(row.iloc[1])
-    cells[2].text = number_format(row.iloc[2]) 
-    cells[3].text = number_format(row.iloc[3]) 
-    cells[4].text = number_format(row.iloc[4]) 
+    cells[2].text = number_format(row.iloc[2])
+    cells[3].text = number_format(row.iloc[3])
+    cells[4].text = number_format(row.iloc[4])
 
-plheads: list = ['Total Revenue','Gross Profit','Total Overhead','Net Profit']
-table_formatter(table_name=tbl_month_basic,style_name='table_style_1',special=plheads)
+plheads: list = ['Total Revenue', 'Gross Profit', 'Total Overhead', 'Net Profit']
+table_formatter(table_name=tbl_month_basic, style_name='table_style_1', special=plheads)
 document.add_page_break()
 
 cy_cp_full: pd.DataFrame = df_pl['df_full']['cy_cp_full']
@@ -1231,8 +1312,17 @@ cp_month_full: pd.DataFrame = pd.concat(
     [cy_cp_full.set_index('Description'), cy_pp_full.set_index('Description'), py_cp_full.set_index('Description'),
      cy_cp_full_bud.set_index('Description')],
     axis=1, join='outer').reset_index()
+cp_month_full.fillna(value=0, inplace=True)
+cp_month_full['Description'] = pd.Categorical(cp_month_full['Description'], categories=[k for k in sort_order.keys()],
+                                              ordered=True)
+cp_month_full.sort_values(by='Description', inplace=True)
 
+cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Services W.L.L')
+apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
+cy_cp_pl_full_report_title = document.add_paragraph().add_run('Complete Profit & Loss for the current period')
+apply_style_properties(cy_cp_pl_report_title, style_picker(name='report_title'))
 tbl_month_full = document.add_table(rows=1, cols=5)
+tbl_month_full.columns[0].width = Cm(7.5)
 heading_cells = tbl_month_full.rows[0].cells
 heading_cells[0].text = 'Description'
 heading_cells[1].text = 'Current Month'
@@ -1243,11 +1333,11 @@ heading_cells[4].text = 'Budget'
 for _, row in cp_month_full.iterrows():
     cells = tbl_month_full.add_row().cells
     cells[0].text = str(row['Description'])
-    cells[1].text = f"{row.iloc[1]:,.0f}" if row.iloc[1] >= 0 else f"({abs(row.iloc[1]):,.0f})"
-    cells[2].text = f"{row.iloc[2]:,.0f}" if row.iloc[2] >= 0 else f"({abs(row.iloc[2]):,.0f})"
-    cells[3].text = f"{row.iloc[3]:,.0f}" if row.iloc[3] >= 0 else f"({abs(row.iloc[3]):,.0f})"
-    cells[4].text = f"{row.iloc[4]:,.0f}" if row.iloc[4] >= 0 else f"({abs(row.iloc[4]):,.0f})"
-tbl_month_full.style = 'Light Grid Accent 2'
+    cells[1].text = number_format(row.iloc[1])
+    cells[2].text = number_format(row.iloc[2])
+    cells[3].text = number_format(row.iloc[3])
+    cells[4].text = number_format(row.iloc[4])
+table_formatter(table_name=tbl_month_full, style_name='table_style_1', special=plheads)
 document.add_page_break()
 
 cy_ytd_basic: pd.DataFrame = df_pl['df_basic']['cy_ytd_basic']
@@ -1257,8 +1347,17 @@ cy_ytd_basic_bud: pd.DataFrame = df_pl['df_basic']['cy_ytd_basic_bud']
 cp_ytd: pd.DataFrame = pd.concat(
     [cy_ytd_basic.set_index('Description'), py_ytd_basic.set_index('Description'),
      cy_ytd_basic_bud.set_index('Description')], axis=1, join='outer').reset_index()
+cp_ytd.fillna(value=0, inplace=True)
+cp_ytd['Description'] = pd.Categorical(cp_ytd['Description'], categories=[k for k in sort_order.keys()],
+                                       ordered=True)
+cp_ytd.sort_values(by='Description', inplace=True)
+cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Services W.L.L')
+apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
+cy_ytd_pl_report_title = document.add_paragraph().add_run('Profit & Loss for Year to Date')
+apply_style_properties(cy_cp_pl_report_title, style_picker(name='report_title'))
 
 tbl_ytd_basic = document.add_table(rows=1, cols=4)
+tbl_ytd_basic.columns[0].width = Cm(7.5)
 heading_cells = tbl_ytd_basic.rows[0].cells
 heading_cells[0].text = 'Description'
 heading_cells[1].text = 'YTD CY'
@@ -1268,16 +1367,28 @@ heading_cells[3].text = 'Budget'
 for _, row in cp_ytd.iterrows():
     cells = tbl_ytd_basic.add_row().cells
     cells[0].text = str(row['Description'])
-    cells[1].text = f"{row.iloc[1]:,.0f}" if row.iloc[1] >= 0 else f"({abs(row.iloc[1]):,.0f})"
-    cells[2].text = f"{row.iloc[2]:,.0f}" if row.iloc[2] >= 0 else f"({abs(row.iloc[2]):,.0f})"
-    cells[3].text = f"{row.iloc[3]:,.0f}" if row.iloc[3] >= 0 else f"({abs(row.iloc[3]):,.0f})"
+    cells[1].text = number_format(row.iloc[1])
+    cells[2].text = number_format(row.iloc[2])
+    cells[3].text = number_format(row.iloc[3])
 
-tbl_ytd_basic.style = 'Light Grid Accent 3'
+table_formatter(table_name=tbl_ytd_basic, style_name='table_style_1', special=plheads)
 document.add_page_break()
 
 cy_ytd_basic_monthwise: pd.DataFrame = df_pl['df_basic']['cy_ytd_basic_monthwise']
+cy_ytd_basic_monthwise.fillna(value=0, inplace=True)
+cy_ytd_basic_monthwise['Description'] = pd.Categorical(cy_ytd_basic_monthwise['Description'],
+                                                       categories=[k for k in sort_order.keys()],
+                                                       ordered=True)
+cy_ytd_basic_monthwise.sort_values(by='Description', inplace=True)
+change_orientation(doc=document, method='l')
+
+cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Services W.L.L')
+apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
+cy_ytd_pl_report_title = document.add_paragraph().add_run('Profit & Loss for Year to Date Month-Wise')
+apply_style_properties(cy_cp_pl_report_title, style_picker(name='report_title'))
 
 tbl_monthwise_basic = document.add_table(rows=1, cols=cy_ytd_basic_monthwise.shape[1])
+tbl_monthwise_basic.columns[0].width = Cm(7.5)
 heading_cells = tbl_monthwise_basic.rows[0].cells
 
 for i in range(cy_ytd_basic_monthwise.shape[1]):
@@ -1292,27 +1403,14 @@ for _, row in cy_ytd_basic_monthwise.iterrows():
         if j == 0:
             cells[0].text = str(row['Description'])
         else:
-            cells[j].text = f"{row.iloc[j]:,.0f}" if row.iloc[j] >= 0 else f"({abs(row.iloc[j]):,.0f})"
+            cells[j].text = number_format(row.iloc[j])
+table_formatter(table_name=tbl_monthwise_basic, style_name='table_style_1', special=plheads)
 
-tbl_monthwise_basic.style = 'Light Grid Accent 5'
 document.add_page_break()
-
+change_orientation(doc=document, method='p')
 df_rev: dict = revenue(end_date=end_date, data=merged)
 rev_division: pd.DataFrame = df_rev['rev_division']
 rev_division_plot: pd.DataFrame = rev_division.copy()
-
-
-def plotting_period(end_date: datetime, months: int) -> datetime:
-    start_date: datetime = datetime(year=end_date.year, month=1, day=1)
-    delta = relativedelta(dt1=end_date, dt2=start_date)
-    period: int = delta.months + (delta.years * 12) + 1
-    if period < 6:
-        start_date = end_date - relativedelta(months=months - 1)
-        start_date = datetime(year=start_date.year, month=start_date.month, day=1)
-    else:
-        start_date
-    return start_date
-
 
 rev_division_line: pd.DataFrame = rev_division_plot.loc[(rev_division_plot['Voucher Date'] <= end_date) & (
         rev_division_plot['Voucher Date'] >= plotting_period(end_date=end_date, months=6))].pivot_table(
@@ -1365,6 +1463,11 @@ rev_division = rev_division.loc[(rev_division['Voucher Date'] <= end_date) & (
     index='Second_Level_Group_Name', columns='Voucher Date', values='Amount',
     aggfunc='sum', fill_value=0).reset_index().rename(columns={'Second_Level_Group_Name': 'Description'})
 
+cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Services W.L.L')
+apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
+rev_div_report_title = document.add_paragraph().add_run('Division wise monthly revenue')
+apply_style_properties(rev_div_report_title, style_picker(name='report_title'))
+
 tbl_monthwise_rev_div = document.add_table(rows=1, cols=rev_division.shape[1])
 heading_cells = tbl_monthwise_rev_div.rows[0].cells
 
@@ -1380,9 +1483,9 @@ for _, row in rev_division.iterrows():
         if j == 0:
             cells[0].text = str(row['Description'])
         else:
-            cells[j].text = f"{row.iloc[j]:,.0f}" if row.iloc[j] >= 0 else f"({abs(row.iloc[j]):,.0f})"
+            cells[j].text = number_format(row.iloc[j])
 
-tbl_monthwise_rev_div.style = 'Light Grid Accent 6'
+table_formatter(table_name=tbl_monthwise_rev_div, style_name='table_style_1', special=plheads)
 document.add_page_break()
 
 rev_category: pd.DataFrame = df_rev['rev_category']
@@ -1414,6 +1517,11 @@ ytd_cat_pie.pie(x=rev_category_pie_ytd['Amount'], labels=rev_category_pie_ytd.in
 plt.savefig(rev_cat_total_buf, format='png')
 plt.close(cat_total)
 
+cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Services W.L.L')
+apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
+rev_cat_report_title = document.add_paragraph().add_run('Market/Related-Party monthly revenue')
+apply_style_properties(rev_cat_report_title, style_picker(name='report_title'))
+
 tbl_monthwise_rev_cat = document.add_table(rows=1, cols=rev_category.shape[1])
 heading_cells = tbl_monthwise_rev_cat.rows[0].cells
 
@@ -1429,9 +1537,9 @@ for _, row in rev_category.iterrows():
         if j == 0:
             cells[0].text = str(row['Description'])
         else:
-            cells[j].text = f"{row.iloc[j]:,.0f}" if row.iloc[j] >= 0 else f"({abs(row.iloc[j]):,.0f})"
+            cells[j].text = number_format(row.iloc[j])
 
-tbl_monthwise_rev_cat.style = 'Light Grid'
+table_formatter(table_name=tbl_monthwise_rev_cat, style_name='table_style_1', special=[])
 document.add_page_break()
 rev_div_buf.seek(0)
 doc.add_picture(rev_div_buf)
@@ -1442,6 +1550,12 @@ document.add_page_break()
 rev_cat_total_buf.seek(0)
 doc.add_picture(rev_cat_total_buf)
 document.add_page_break()
+
+change_orientation(doc=document, method='l')
+cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Services W.L.L')
+apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
+cy_mw_bs_report_title = document.add_paragraph().add_run('Balance sheet month wise')
+apply_style_properties(cy_mw_bs_report_title, style_picker(name='report_title'))
 
 tbl_yearly_bs = document.add_table(rows=1, cols=bscombined.shape[1])
 heading_cells = tbl_yearly_bs.rows[0].cells
@@ -1459,11 +1573,23 @@ for _, row in bscombined.iterrows():
         else:
             cells[j].text = f"{row.iloc[j]:,.0f}" if row.iloc[j] >= 0 else f"({abs(row.iloc[j]):,.0f})"
 
-tbl_yearly_bs.style = 'Light Grid Accent 5'
+tbl_yearly_bs.style = 'Table Grid'
 document.add_page_break()
+
+change_orientation(doc=document, method='p')
+
+cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Services W.L.L')
+apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
+pl_report_title = document.add_paragraph().add_run('Historical Profit and Loss Comparison')
+apply_style_properties(pl_report_title, style_picker(name='report_title'))
 
 tbl_yearly_pl = document.add_table(rows=1, cols=plcombined.shape[1])
 heading_cells = tbl_yearly_pl.rows[0].cells
+plcombined.fillna(value=0, inplace=True)
+plcombined['Description'] = pd.Categorical(plcombined['Description'], categories=[k for k in sort_order.keys()],
+                                           ordered=True)
+plcombined.sort_values(by='Description', inplace=True)
+
 for i in range(plcombined.shape[1]):
     if i == 0:
         heading_cells[i].text = 'Description'
@@ -1478,7 +1604,7 @@ for _, row in plcombined.iterrows():
         else:
             cells[j].text = f"{row.iloc[j]:,.0f}" if row.iloc[j] >= 0 else f"({abs(row.iloc[j]):,.0f})"
 
-tbl_yearly_pl.style = 'Light Grid Accent 5'
+table_formatter(table_name=tbl_yearly_pl, style_name='table_style_1', special=plheads)
 document.add_page_break()
 
 interco: dict = interco_bal(data=merged, end_date=end_date)
@@ -1486,6 +1612,11 @@ rpr_df: pd.DataFrame = interco.get('rpr_df')
 rpr_total_row: pd.DataFrame = pd.DataFrame(data={'Amount': [rpr_df['Amount'].sum()], 'Description': 'Total'}, index=[
     '9999'])
 rpr_df = pd.concat([rpr_df, rpr_total_row], ignore_index=False)
+
+cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Services W.L.L')
+apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
+rpr_report_title = document.add_paragraph().add_run('Break-up of Related-Party Receiavable')
+apply_style_properties(rpr_report_title, style_picker(name='report_title'))
 
 tbl_rpr = document.add_table(rows=1, cols=2)
 heading_cells = tbl_rpr.rows[0].cells
@@ -1495,16 +1626,19 @@ heading_cells[1].text = 'Amount'
 for _, row in rpr_df.iterrows():
     cells = tbl_rpr.add_row().cells
     cells[0].text = str(row['Description'])
-    cells[1].text = f"{row.iloc[1]:,.0f}" if row.iloc[1] >= 0 else f"{abs(row.iloc[1]):,.0f}"
+    cells[1].text = number_format(row.iloc[1])
 
-tbl_rpr.style = 'Light Grid Accent 3'
+table_formatter(table_name=tbl_rpr, style_name='table_style_1', special=[])
 document.add_page_break()
 
 rpp_df: float = interco.get('rpp_df')
 rpp_total_row: pd.DataFrame = pd.DataFrame(data={'Amount': [rpp_df['Amount'].sum()], 'Description': 'Total'}, index=[
     '9999'])
 rpp_df = pd.concat([rpp_df, rpp_total_row], ignore_index=False)
-
+cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Services W.L.L')
+apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
+rpp_report_title = document.add_paragraph().add_run('Break-up of Related-Party Payables')
+apply_style_properties(rpr_report_title, style_picker(name='report_title'))
 tbl_rpp = document.add_table(rows=1, cols=2)
 heading_cells = tbl_rpp.rows[0].cells
 heading_cells[0].text = 'Description'
@@ -1513,9 +1647,9 @@ heading_cells[1].text = 'Amount'
 for _, row in rpp_df.iterrows():
     cells = tbl_rpp.add_row().cells
     cells[0].text = str(row['Description'])
-    cells[1].text = f"{row.iloc[1]:,.0f}" if row.iloc[1] >= 0 else f"{abs(row.iloc[1]):,.0f}"
+    cells[1].text = number_format(row.iloc[1])
 
-tbl_rpp.style = 'Light Grid Accent 3'
+table_formatter(table_name=tbl_rpp, style_name='table_style_1', special=[])
 document.add_page_break()
 customer_list: list = sorted(fInvoices.loc[(fInvoices['Invoice_Date'] >= datetime(year=end_date.year,
                                                                                   month=end_date.month, day=1)) & (
@@ -1523,8 +1657,28 @@ customer_list: list = sorted(fInvoices.loc[(fInvoices['Invoice_Date'] >= datetim
 customer_info: dict = customer_ratios(customers=customer_list, fInvoices=fInvoices, end_date=end_date,
                                       fCollection=fCollection, dCustomer=dCustomers, dEmployee=dEmployee)
 
+heading_format = {'fontfamily': 'Georgia', 'color': 'k', 'fontweight': 'bold', 'fontsize': 10}
+
+cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Services W.L.L')
+apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
+cust_info_toc = document.add_paragraph().add_run('Key data about customers')
+apply_style_properties(cust_info_toc, style_picker(name='report_title'))
+tbl_cust_toc = document.add_table(rows=1, cols=2)
+heading_cells = tbl_cust_toc.rows[0].cells
+heading_cells[0].text = 'Customer Name'
+heading_cells[1].text = 'Page #'
+
+for idx, row in enumerate(customer_list):
+    cells = tbl_cust_toc.add_row().cells
+    cells[0].text = str(row.upper())
+    cells[1].text = str(idx + 1)
+
+table_formatter(table_name=tbl_cust_toc, style_name='table_style_1', special=[])
+document.add_page_break()
+
 for customer in customer_list:
-    document.add_heading(customer.upper(), 1)
+    cy_cp_pl_company_title = document.add_paragraph().add_run(customer.upper())
+    apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
     tbl_cust_main = document.add_table(rows=2, cols=3)
     tbl_cust_main_th = tbl_cust_main.rows[0]
     tbl_cust_main_th.cells[0].text = 'Date of Establishment'
@@ -1533,8 +1687,9 @@ for customer in customer_list:
     tbl_cust_main_td = tbl_cust_main.rows[1]
     tbl_cust_main_td.cells[0].text = str(customer_info[customer]['date_established'])
     tbl_cust_main_td.cells[1].text = str(customer_info[customer]['customer_since'])
-    tbl_cust_main_td.cells[2].text = str(customer_info[customer]['last_sales_person'])
-    tbl_cust_main.style = 'Light Grid Accent 3'
+    tbl_cust_main_td.cells[2].text = ' '.join(
+        str(customer_info[customer]['last_sales_person']).split(sep=' ')[:2]).title()
+    tbl_cust_main.style = 'Table Grid'
 
     tbl_cust_rev = document.add_table(rows=4, cols=4)
     tbl_cust_rev_th_1 = tbl_cust_rev.rows[0]
@@ -1547,6 +1702,7 @@ for customer in customer_list:
     tbl_cust_rev_td_1.cells[1].text = str(customer_info[customer]['cy_ytd_rev'])
     tbl_cust_rev_td_1.cells[2].text = str(customer_info[customer]['cy_cp_rev_contrib_pct'])
     tbl_cust_rev_td_1.cells[3].text = str(customer_info[customer]['cy_pp_rev'])
+
     tbl_cust_rev_th_2 = tbl_cust_rev.rows[2]
     tbl_cust_rev_th_2.cells[0].text = 'PY CP Revenue'
     tbl_cust_rev_th_2.cells[1].text = 'PY YTD Revenue'
@@ -1557,7 +1713,7 @@ for customer in customer_list:
     tbl_cust_rev_td_2.cells[1].text = str(customer_info[customer]['py_ytd_rev'])
     tbl_cust_rev_td_2.cells[2].text = str(customer_info[customer]['cy_ytd_rev_contrib_pct'])
     tbl_cust_rev_td_2.cells[3].text = str(customer_info[customer]['total_revenue'])
-    tbl_cust_rev.style = 'Light Grid Accent 3'
+    tbl_cust_rev.style = 'Table Grid'
 
     tbl_cust_col = document.add_table(rows=2, cols=4)
     tbl_cust_col_th = tbl_cust_col.rows[0]
@@ -1571,7 +1727,7 @@ for customer in customer_list:
     tbl_cust_col_td.cells[2].text = str(customer_info[customer]['collection_median'])
     tbl_cust_col_td.cells[
         3].text = f"{str(customer_info[customer]['last_receipt_amt'])}\n{str(customer_info[customer]['last_receipt_dt'])}"
-    tbl_cust_col.style = 'Light Grid Accent 3'
+    tbl_cust_col.style = 'Table Grid'
 
     tbl_cust_gp = document.add_table(rows=2, cols=4)
     tbl_cust_gp_th = tbl_cust_gp.rows[0]
@@ -1584,25 +1740,33 @@ for customer in customer_list:
     tbl_cust_gp_td.cells[1].text = str(customer_info[customer]['customer_gp_ytd'])
     tbl_cust_gp_td.cells[2].text = str(customer_info[customer]['cy_cp_roi'])
     tbl_cust_gp_td.cells[3].text = str(customer_info[customer]['cy_ytd_roi'])
-    tbl_cust_gp.style = 'Light Grid Accent 3'
+    tbl_cust_gp.style = 'Table Grid'
 
     fig, ((age_tbl, age_pie), (rev_tbl, rev_bar)) = plt.subplots(nrows=2, ncols=2)
 
     ageing: pd.DataFrame = customer_info[customer]['ageing']
+
     ageing.reset_index(inplace=True)
-    monthly_rev: pd.DataFrame = customer_info[customer]['monthyly_rev']
+    monthly_rev: pd.DataFrame = customer_info[customer]['monthly_rev']
     monthly_rev.reset_index(inplace=True)
+    if not ageing.empty:
+        age_tbl.set_title('Receivable Ageing', loc='left', **heading_format)
+        age_tbl.table(cellText=[[i[0], f'{i[1]:,.0f}'] for i in ageing.values], colLabels=ageing.columns,
+                      cellLoc='center', loc='center')
+        age_tbl.axis('off')
 
-    age_tbl.table(cellText=ageing.values, colLabels=ageing.columns, cellLoc='center', loc='center')
-    age_tbl.axis('off')
-
-    age_pie.pie(x=ageing['Inv_Amount'], labels=ageing['Age Bracket'], autopct='%.1f%%')
-    age_pie.axis('off')
-
-    rev_tbl.table(cellText=monthly_rev.values, colLabels=monthly_rev.columns, cellLoc='center', loc='center')
+        age_pie.pie(x=ageing['Amount'], labels=ageing['Age Bracket'], autopct='%.1f%%')
+        age_pie.axis('off')
+    else:
+        age_tbl.text(s='Zero Balance', x=0.5, y=0.5, ha='center', va='center', fontsize=28)
+        age_tbl.axis('off')
+        age_pie.text(s='Zero Balance', x=0.5, y=0.5, ha='center', va='center', fontsize=28)
+        age_pie.axis('off')
+    rev_tbl.set_title('Monthly Sales', loc='left', **heading_format)
+    rev_tbl.table(cellText=[[i[0].strftime('%B'), f'{i[1]:,.0f}'] for i in monthly_rev.values],
+                  colLabels=monthly_rev.columns, cellLoc='center', loc='center')
     rev_tbl.axis('off')
-
-    rev_bar.bar(monthly_rev['Invoice_Date'], monthly_rev['Amount'])
+    rev_bar.bar([i.strftime('%b') for i in monthly_rev['Month']], monthly_rev['Amount'])
 
     buf = BytesIO()
     plt.tight_layout()
@@ -1618,11 +1782,29 @@ salesperson_list: list = fInvoices.loc[(fInvoices['Invoice_Date'] <= end_date) &
 
 salesperson_stats: dict = sales_person(emp_ids=salesperson_list, dEmployee=dEmployee, fInvoices=fInvoices)
 
+cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Services W.L.L')
+apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
+salesman_info_toc = document.add_paragraph().add_run('Key data about sales person')
+apply_style_properties(salesman_info_toc, style_picker(name='report_title'))
+tbl_salesman_toc = document.add_table(rows=1, cols=2)
+heading_cells = tbl_salesman_toc.rows[0].cells
+heading_cells[0].text = 'Salesperson Name'
+heading_cells[1].text = 'Page #'
+
+for idx, row in enumerate(salesperson_list):
+    cells = tbl_salesman_toc.add_row().cells
+    cells[0].text = ' '.join(dEmployee.loc[row, 'Employee_Name'].split(sep=' ')[:2]).title()
+    cells[1].text = str(idx + 1)
+
+table_formatter(table_name=tbl_salesman_toc, style_name='table_style_1', special=[])
+document.add_page_break()
+
 for salesperson in salesperson_list:
     salesperson_name: str = ' '.join(dEmployee.loc[salesperson, 'Employee_Name'].split(sep=' ')[:2]).title()
     salutation: str = "Mr." if dEmployee.loc[salesperson, 'Gender'] == 'Male' else "Ms."
     full_name: str = f'{salutation}{salesperson_name}'
-    document.add_heading(full_name, 0)
+    cy_cp_pl_company_title = document.add_paragraph().add_run(full_name)
+    apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
     tbl_salesman_main = document.add_table(rows=4, cols=2)
     tbl_salesman_main_th_1 = tbl_salesman_main.rows[0]
     tbl_salesman_main_th_1.cells[0].text = 'Date of Join'
@@ -1639,18 +1821,16 @@ for salesperson in salesperson_list:
     tbl_salesman_main_td_2 = tbl_salesman_main.rows[3]
     tbl_salesman_main_td_2.cells[0].text = str(salesperson_stats[salesperson]['cp_target'])
     tbl_salesman_main_td_2.cells[1].text = str(salesperson_stats[salesperson]['ytd_target'])
-
-    tbl_salesman_main.style = 'Light Grid Accent 3'
+    tbl_salesman_main.style = 'Table Grid'
 
     tbl_salesman_rev = document.add_table(rows=4, cols=2)
     tbl_salesman_rev_th_1 = tbl_salesman_rev.rows[0]
     tbl_salesman_rev_th_1.cells[0].text = 'CY CP Revenue'
-    tbl_salesman_rev_th_1.cells[1].text = 'cy YTD Revenue'
+    tbl_salesman_rev_th_1.cells[1].text = 'CY YTD Revenue'
 
     tbl_salesman_rev_td_1 = tbl_salesman_rev.rows[1]
     tbl_salesman_rev_td_1.cells[0].text = str(salesperson_stats[salesperson]['cy_cp_rev'])
     tbl_salesman_rev_td_1.cells[1].text = str(salesperson_stats[salesperson]['cy_ytd_rev'])
-
     tbl_salesman_rev_th_2 = tbl_salesman_rev.rows[2]
     tbl_salesman_rev_th_2.cells[0].text = 'CY CP Own\nRevenue'
     tbl_salesman_rev_th_2.cells[1].text = 'CY YTD Own\nRevenue'
@@ -1658,18 +1838,16 @@ for salesperson in salesperson_list:
     tbl_salesman_rev_td_2 = tbl_salesman_rev.rows[3]
     tbl_salesman_rev_td_2.cells[0].text = str(salesperson_stats[salesperson]['cy_cp_rev_org'])
     tbl_salesman_rev_td_2.cells[1].text = str(salesperson_stats[salesperson]['cy_ytd_rev_org'])
-
-    tbl_salesman_rev.style = 'Light Grid Accent 3'
+    tbl_salesman_rev.style = 'Table Grid'
 
     tbl_salesman_gp = document.add_table(rows=4, cols=2)
     tbl_salesman_gp_th_1 = tbl_salesman_gp.rows[0]
     tbl_salesman_gp_th_1.cells[0].text = 'CY CP GP'
-    tbl_salesman_gp_th_1.cells[1].text = 'cy YTD GP'
+    tbl_salesman_gp_th_1.cells[1].text = 'CY YTD GP'
 
     tbl_salesman_gp_td_1 = tbl_salesman_gp.rows[1]
     tbl_salesman_gp_td_1.cells[0].text = str(salesperson_stats[salesperson]['cy_cp_gp'])
     tbl_salesman_gp_td_1.cells[1].text = str(salesperson_stats[salesperson]['cy_ytd_gp'])
-
     tbl_salesman_gp_th_2 = tbl_salesman_gp.rows[2]
     tbl_salesman_gp_th_2.cells[0].text = 'CY CP Revenue\nContribution'
     tbl_salesman_gp_th_2.cells[1].text = 'CY YTD Revenue\nContribution'
@@ -1677,14 +1855,11 @@ for salesperson in salesperson_list:
     tbl_salesman_gp_td_2 = tbl_salesman_gp.rows[3]
     tbl_salesman_gp_td_2.cells[0].text = str(salesperson_stats[salesperson]['cy_cp_rev_contrib_pct'])
     tbl_salesman_gp_td_2.cells[1].text = str(salesperson_stats[salesperson]['cy_ytd_rev_contrib_pct'])
-
-    tbl_salesman_gp.style = 'Light Grid Accent 3'
+    tbl_salesman_gp.style = 'Table Grid'
     document.add_page_break()
 
 fig_rev, ((cp_in_guard, cp_in_elv), (cp_ex_guard, cp_ex_elv), (ytd_in_guard, ytd_in_elv),
           (ytd_ex_guard, ytd_ex_elv)) = plt.subplots(nrows=4, ncols=2, figsize=(7, 10))  # w,l
-
-# rev_plots:list = [a for row in rev_axis for a in row]
 
 cp_in_guard_df: pd.DataFrame = topcustomers(fInvoices=fInvoices, end_date=end_date, mode='month', div='guarding',
                                             type='Related', cnt=5)
@@ -1702,8 +1877,6 @@ ytd_ex_guard_df: pd.DataFrame = topcustomers(fInvoices=fInvoices, end_date=end_d
                                              type='Market', cnt=5)
 ytd_ex_elv_df: pd.DataFrame = topcustomers(fInvoices=fInvoices, end_date=end_date, mode='ytd', div='elv', type='Market',
                                            cnt=5)
-
-heading_format = {'fontfamily': 'Georgia', 'color': 'c', 'fontweight': 'bold', 'fontsize': 10}
 
 cp_in_guard.set_title('Current Month Internal Guarding', loc='left', **heading_format)
 t1 = cp_in_guard.table(cellText=cp_in_guard_df.values, colLabels=cp_in_guard_df.columns, cellLoc='center', loc='best')
@@ -1800,9 +1973,15 @@ rev_cha_buf.seek(0)
 doc.add_picture(rev_cha_buf)
 
 document.add_page_break()
+
+credit = document.add_paragraph(
+    '\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nNadun Jayathunga\n')
+credit.add_run('Cheif Accountant\nNasser Bin Nawaf & Parners Holding W.L.L\n')
+credit.add_run('mail:njayathunga@nbn.qa\nTel:+974 4403 0407').italic = True
+
 document.core_properties.author = "Nadun Jayathunga"
 document.core_properties.keywords = ("Chief Accountant\nNasser Bin Nawaf and Partners Holdings "
-                                     "W.L.L\nE-mail\tnjayathunga@nbn.qa\nTelephone\t+974 4403 0407")
+                                     "W.L.L\nmail:njayathunga@nbn.qa\nTele:+974 4403 0407")
 
 doc.save('Monthly FS.docx')
 convert('Monthly FS.docx')
