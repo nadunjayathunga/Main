@@ -11,31 +11,44 @@ This Programme requires following dataframes
 
 START_DATE: datetime = datetime(year=2020, month=11, day=1)
 END_DATE: datetime = datetime(year=2024, month=12, day=31)
-# VOUCHER_TYPES: list = ['Project Invoice','Contract Invoice','SERVICE INVOICE'] # ESS
-VOUCHER_TYPES: list = ['Project Invoice', 'Sales Invoice'] # NBNL
+VOUCHER_TYPES: list = ['Project Invoice','Contract Invoice','SERVICE INVOICE'] # ESS
+# VOUCHER_TYPES: list = ['Project Invoice', 'Sales Invoice'] # NBNL
 
-# PATH = r'C:\Masters\Data-ESS.xlsx'
-PATH = r'C:\Masters\Data-NBNL.xlsx'
+PATH = r'C:\Masters\Data-ESS.xlsx'
+# PATH = r'C:\Masters\Data-NBNL.xlsx'
 
 
+# df_gl: pd.DataFrame = pd.read_excel(io=PATH, sheet_name='fGL',
+#                                     usecols=['Voucher Date', 'Ledger Code', 'Ledger Name', 'Transaction Type',
+#                                              'Voucher Number', 'Debit Amount', 'Fourth Level Group Name']) # for nbnl
 df_gl: pd.DataFrame = pd.read_excel(io=PATH, sheet_name='fGL',
-                                    usecols=['Voucher Date', 'Ledger Code', 'Ledger Name', 'Transaction Type',
-                                             'Voucher Number', 'Debit Amount', 'Fourth Level Group Name'])
+                                    usecols=['Voucher Date', 'Ledger_Code', 'Ledger Name', 'Transaction Type',
+                                             'Voucher Number', 'Debit Amount', 'Fourth Level Group Name']) # for ess
+# df_collection: pd.DataFrame = pd.read_excel(io=PATH,
+#                                             usecols=['Ledger Code', 'Invoice Number', 'Invoice Amount',
+#                                                      'Payment Voucher Number',
+#                                                      'Payment Date',
+#                                                      'Invoice Date'],
+#                                             sheet_name='fCollection', date_format={'Invoice Date': '%d-%b-%y'},
+#                                             dtype={
+#                                                 'Payment Voucher Number': 'str'},
+#                                             index_col='Invoice Number') # for nbnl
+
 df_collection: pd.DataFrame = pd.read_excel(io=PATH,
-                                            usecols=['Ledger Code', 'Invoice Number', 'Invoice Amount',
+                                            usecols=['Ledger_Code', 'Invoice Number', 'Invoice Amount',
                                                      'Payment Voucher Number',
                                                      'Payment Date',
                                                      'Invoice Date'],
                                             sheet_name='fCollection', date_format={'Invoice Date': '%d-%b-%y'},
                                             dtype={
                                                 'Payment Voucher Number': 'str'},
-                                            index_col='Invoice Number')
+                                            index_col='Invoice Number') # for nbnl
 
 
-df_LogInv :pd.DataFrame = pd.read_excel(io=PATH,usecols=['Invoice Date','Customer Code'],sheet_name='fLogInv')
+# df_LogInv :pd.DataFrame = pd.read_excel(io=PATH,usecols=['Invoice Date','Customer Code'],sheet_name='fLogInv')
 
-# df_dCustomers :pd.DataFrame = pd.read_excel(io=PATH,usecols=['Customer_Code','Cus_Name','Credit_Days','Ledger_Code'],sheet_name='dCustomers') # ESS
-df_dCustomers :pd.DataFrame = pd.read_excel(io=PATH,usecols=['Customer_Code','Cus_Name','Credit_Days','Ledger_Code'],sheet_name='dCustomers') # NBNL
+df_dCustomers :pd.DataFrame = pd.read_excel(io=PATH,usecols=['Customer_Code','Cus_Name','Credit_Days','Ledger_Code'],sheet_name='dCustomers') # ESS
+# df_dCustomers :pd.DataFrame = pd.read_excel(io=PATH,usecols=['Customer_Code','Cus_Name','Credit_Days','Ledger_Code'],sheet_name='dCustomers') # NBNL
 
 
 def days_taken(row) -> int:
@@ -69,7 +82,8 @@ def days_taken(row) -> int:
 
 
 def report(ledger:int, df_collection:pd.DataFrame)->float:
-        inv_filt = (df_gl['Transaction Type'].isin(VOUCHER_TYPES)) & (df_gl['Ledger Code'] == ledger)
+        # inv_filt = (df_gl['Transaction Type'].isin(VOUCHER_TYPES)) & (df_gl['Ledger Code'] == ledger) # for nbnl
+        inv_filt = (df_gl['Transaction Type'].isin(VOUCHER_TYPES)) & (df_gl['Ledger_Code'] == ledger) # for ess
         invoices_list: list = df_gl.loc[inv_filt, 'Voucher Number'].unique().tolist()
         # Payment Voucher Number, invoices that has not been paid at all
         df_collection: pd.DataFrame = df_collection.loc[df_collection['Payment Voucher Number'].notnull()]
@@ -88,7 +102,7 @@ def report(ledger:int, df_collection:pd.DataFrame)->float:
         df_collection.to_csv(f'{ledger}.csv')
         return df_collection['Days_Taken'].median()
 
-ledgers = [1020201049] # do not enter has str. 
+ledgers = [1020201081] # do not enter has str. 
 for ledger in ledgers:
     print(report(ledger=ledger,df_collection=df_collection))
      

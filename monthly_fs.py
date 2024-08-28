@@ -7,7 +7,7 @@ from dateutil.relativedelta import relativedelta
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.section import WD_ORIENT, WD_SECTION
-from docx.shared import Pt, RGBColor, Cm
+from docx.shared import Pt, RGBColor, Cm, Inches
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx2pdf import convert
@@ -16,13 +16,6 @@ from data import company_data, company_info, doc_styles, table_style
 import statistics
 import numpy as np
 import sys
-
-company_id = 0
-end_date: datetime = datetime(year=2024, month=7, day=31)
-start_date: datetime = datetime(year=end_date.year - 1, month=1, day=1)
-sys_cut_off: datetime = datetime(year=2020, month=11, day=1)
-VOUCHER_TYPES: list = ['Project Invoice',
-                       'Contract Invoice', 'SERVICE INVOICE', 'Sales Invoice']
 
 
 def data_sources(company_id: int) -> dict:
@@ -97,7 +90,7 @@ def first_page(document, report_date: datetime):
     second.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     third = document.add_paragraph()
-    third_run = third.add_run('FINANCIAL STATEMENT ANALYSIS')
+    third_run = third.add_run('COMPREHENSIVE FINANCIAL STATEMENT ANALYSIS')
     third_run.font.size = Pt(24)
     third.alignment = WD_ALIGN_PARAGRAPH.CENTER
     return document
@@ -372,19 +365,6 @@ def empctc(row, dEmployee: pd.DataFrame) -> float:
     return ctc
 
 
-cleaned_data: dict = preprocessing(data=data_sources(company_id=0))
-fGL: pd.DataFrame = cleaned_data['fGL']
-dEmployee: pd.DataFrame = cleaned_data['dEmployee']
-dCoAAdler: pd.DataFrame = cleaned_data['dCoAAdler']
-merged: pd.DataFrame = pd.merge(
-    left=fGL, right=dCoAAdler, on='Ledger_Code', how='left')
-fInvoices: pd.DataFrame = cleaned_data['fInvoices']
-fBudget: pd.DataFrame = cleaned_data['fBudget']
-fCollection: pd.DataFrame = cleaned_data['fCollection']
-dCustomers: pd.DataFrame = cleaned_data['dCustomers']
-dJobs: pd.DataFrame = cleaned_data['dJobs']
-
-
 def profitandlossheads(data: pd.DataFrame, start_date: datetime, end_date: datetime, bu: list) -> pd.DataFrame:
     gp_filt = (data['Third_Level_Group_Name'].isin(['Cost of Sales', 'Direct Income'])) & (
             data['Voucher Date'] >= start_date) & (data['Voucher Date'] <= end_date) & (
@@ -410,9 +390,8 @@ def profitandlossheads(data: pd.DataFrame, start_date: datetime, end_date: datet
     return pl_summary
 
 
-def profitandloss(data: pd.DataFrame, start_date: datetime, end_date: datetime, basic_pl: bool = False,
-                  mid_pl: bool = False, full_pl: bool = False,
-                  bu: list = fGL['Bussiness Unit Name'].unique()) -> dict:
+def profitandloss(data: pd.DataFrame, start_date: datetime, bu: list, end_date: datetime, basic_pl: bool = False,
+                  mid_pl: bool = False, full_pl: bool = False) -> dict:
     df_basic: pd.DataFrame = pd.DataFrame(data={'Voucher Date': [], 'Amount': []})
     df_basic_bud: pd.DataFrame = pd.DataFrame(data={'Voucher Date': [], 'Amount': []})
     df_mid: pd.DataFrame = pd.DataFrame(data={'Voucher Date': [], 'Amount': []})
@@ -762,29 +741,6 @@ def balancesheet(data: pd.DataFrame, end_date: datetime) -> pd.DataFrame:
     return bs_data
 
 
-financial_periods_bs: list = sorted(list(
-    set([end_date, datetime(year=end_date.year - 1, month=end_date.month, day=end_date.day)] + list(
-        pd.date_range(start=fGL['Voucher Date'].min(), end=end_date, freq='Y')))), reverse=True)
-bscombined: pd.DataFrame = pd.DataFrame()
-for f_year in financial_periods_bs:
-    bs: pd.DataFrame = balancesheet(data=merged, end_date=f_year).rename(columns={'Amount': f'{f_year.date()}'})
-    bscombined = pd.concat([bscombined, bs], axis=1)
-bscombined = bscombined.reset_index().rename(columns={'index': 'Description'})
-
-financial_periods_pl: list = sorted(list(
-    set([end_date] + pd.date_range(start=fGL['Voucher Date'].min(), end=end_date, freq='Y').to_pydatetime().tolist())),
-    reverse=True)
-plcombined: pd.DataFrame = pd.DataFrame()
-for f_year in financial_periods_pl:
-    pl: dict = profitandloss(data=merged, end_date=f_year,
-                             start_date=max(sys_cut_off, datetime(year=f_year.year, month=1, day=1)),
-                             basic_pl=True)
-    pl_period: pd.DataFrame = pl['df_basic']['cy_ytd_basic'].rename(columns={'Amount': f'{f_year.date()}'}).set_index(
-        keys='Description')
-    plcombined = pd.concat([plcombined, pl_period], axis=1)
-plcombined = plcombined.reset_index()
-
-
 def bsratios(bsdata: pd.DataFrame, pldata: pd.DataFrame) -> dict:
     bsdata.set_index(keys='Description', inplace=True)
     for period in financial_periods_bs:
@@ -935,23 +891,12 @@ def customer_ratios(customers: list, fInvoices: pd.DataFrame, end_date: datetime
         outstanding_bal: float = fGL.loc[
             (fGL['Ledger_Code'].isin(dCustomer.loc[dCustomer['Cus_Name'].isin([customer]), 'Ledger_Code'].tolist())) & (
                     fGL['Voucher Date'] <= end_date), 'Amount'].sum()
-        cy_cp_rev_contrib_pct: float = fInvoices.loc[
-                                           (fInvoices['Cus_Name'] == customer) & (
-                                                   fInvoices['Invoice_Date'] <= end_date) & (
-                                                   fInvoices['Invoice_Date'] >= datetime(year=end_date.year,
-                                                                                         month=end_date.month,
-                                                                                         day=1)), 'Net_Amount'].sum() / \
-                                       fInvoices.loc[(fInvoices['Invoice_Date'] <= end_date) & (
-                                               fInvoices['Invoice_Date'] >= datetime(year=end_date.year,
-                                                                                     month=end_date.month,
-                                                                                     day=1)), 'Net_Amount'].sum() * 100
-        cy_ytd_rev_contrib_pct: float = fInvoices.loc[(fInvoices['Cus_Name'] == customer) & (
-                fInvoices['Invoice_Date'] <= end_date) & (fInvoices['Invoice_Date'] >= datetime(year=end_date.year,
-                                                                                                month=1,
-                                                                                                day=1)), 'Net_Amount'].sum() / \
-                                        fInvoices.loc[(fInvoices['Invoice_Date'] <= end_date) & (
-                                                fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=1,
-                                                                                      day=1)), 'Net_Amount'].sum() * 100
+        cy_cp_rev_contrib_pct: float = cy_cp_rev / fInvoices.loc[(fInvoices['Invoice_Date'] <= end_date) & (
+                    fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=end_date.month,
+                                                          day=1)), 'Net_Amount'].sum() * 100
+        cy_ytd_rev_contrib_pct: float = cy_ytd_rev / fInvoices.loc[(fInvoices['Invoice_Date'] <= end_date) & (
+                    fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=1,
+                                                          day=1)), 'Net_Amount'].sum() * 100
         monthly_rev: pd.DataFrame = fInvoices.loc[
             (fInvoices['Cus_Name'] == customer) & (fInvoices['Invoice_Date'] <= end_date) & (
                     fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=1, day=1)), ['Invoice_Date',
@@ -961,20 +906,22 @@ def customer_ratios(customers: list, fInvoices: pd.DataFrame, end_date: datetime
         monthly_rev.rename(columns={'Invoice_Date': 'Month', 'Net_Amount': 'Amount'}, inplace=True)
         monthly_rev.set_index(keys='Month', drop=True, inplace=True)
         ageing: pd.DataFrame = cust_ageing(customer=customer)
-        last_sales_person: str = fInvoices.loc[(fInvoices['Invoice_Date'] <= end_date), 'Employee_Code'].tail(1).iloc[0]
+        last_sales_person: str = fInvoices.loc[
+            (fInvoices['Invoice_Date'] <= end_date) & (fInvoices['Cus_Name'] == customer), 'Employee_Code'].tail(
+            1).iloc[0]
         last_sales_person = dEmployee.loc[last_sales_person, 'Employee_Name']
 
         stats: dict = {
             'customer_since': "Not Applicable" if customer_since == "Not Applicable" else customer_since.strftime(
-                '%d-%m-%Y'), 'total_revenue': round(total_revenue), 'credit_score': 0,
-            'last_receipt_amt': "Not Collected" if last_receipt_dt == "Not Collected" else round(last_receipt_amt),
-            'cy_cp_rev': round(cy_cp_rev), 'cy_pp_rev': round(cy_pp_rev),
+                '%d-%m-%Y'), 'total_revenue': total_revenue, 'credit_score': 0,
+            'last_receipt_amt': "Not Collected" if last_receipt_dt == "Not Collected" else last_receipt_amt,
+            'cy_cp_rev': cy_cp_rev, 'cy_pp_rev': cy_pp_rev,
             'last_receipt_dt': "Not Collected" if last_receipt_dt == "Not Collected" else last_receipt_dt.strftime(
                 '%d-%m-%Y'),
-            'cy_ytd_rev': round(cy_ytd_rev), 'py_cp_rev': round(py_cp_rev), 'py_ytd_rev': round(py_ytd_rev),
+            'cy_ytd_rev': cy_ytd_rev, 'py_cp_rev': py_cp_rev, 'py_ytd_rev': py_ytd_rev,
             'collection_median': "Not Collected" if last_receipt_dt == "Not Collected" else collection_median.days,
             'credit_days': credit_days, 'last_sales_person': last_sales_person,
-            'customer_gp_cp': 0, 'outstanding_bal': round(-outstanding_bal), 'ageing': ageing,
+            'customer_gp_cp': 0, 'outstanding_bal': -outstanding_bal, 'ageing': ageing,
             'date_established': date_established.strftime('%d-%m-%Y'),
             'cy_cp_rev_contrib_pct': f'{round(cy_cp_rev_contrib_pct, 1)}%',
             'cy_ytd_rev_contrib_pct': f'{round(cy_ytd_rev_contrib_pct, 1)}%',
@@ -1040,9 +987,9 @@ def sales_person(emp_ids: list, dEmployee: pd.DataFrame, fInvoices: pd.DataFrame
                 fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=1, day=1)), 'Net_Amount'].sum()
         cy_cp_rev_contrib_pct: float = cy_cp_rev / cy_cp_rev_total * 100
         cy_ytd_rev_contrib_pct: float = cy_ytd_rev / cy_ytd_rev_total * 100
-        stats: dict = {'doj': doj.strftime('%d-%m-%Y'), 'cp_target': 0, 'cy_cp_rev': round(cy_cp_rev), 'ytd_target': 0,
-                       'cy_ytd_rev': round(cy_ytd_rev), 'cy_cp_rev_org': round(cy_cp_rev_org),
-                       'cy_ytd_rev_org': round(cy_ytd_rev_org),
+        stats: dict = {'doj': doj.strftime('%d-%m-%Y'), 'cp_target': 0, 'cy_cp_rev': cy_cp_rev, 'ytd_target': 0,
+                       'cy_ytd_rev': cy_ytd_rev, 'cy_cp_rev_org': cy_cp_rev_org,
+                       'cy_ytd_rev_org': cy_ytd_rev_org,
                        'new_customers_added': new_customers_added, 'cy_cp_gp': 0, 'cy_ytd_gp': 0,
                        'ar_balance': ar_balance, 'monthly_rev': monthly_rev,
                        'cy_cp_rev_contrib_pct': f'{round(cy_cp_rev_contrib_pct, 1)}%',
@@ -1057,9 +1004,10 @@ def revenue(end_date: datetime, data: pd.DataFrame) -> dict:
             data['Voucher Date'] <= end_date)
     rev_division: pd.DataFrame = data.loc[rev_filt, ['Voucher Date', 'Amount', 'Second_Level_Group_Name']].groupby(
         by=['Voucher Date', 'Second_Level_Group_Name'], as_index=False).sum()
-    sales_invoices: list = list(
-        set(data.loc[rev_filt, 'Voucher Number'].tolist()))
-    total_invoices: list = list(set(fInvoices['Invoice_Number'].tolist()))
+    # sales_invoices: list = list(set(data.loc[rev_filt, 'Voucher Number'].tolist()))
+    sales_invoices: np.ndarray = data.loc[rev_filt, 'Voucher Number'].unique()
+    # total_invoices: list = list(set(fInvoices['Invoice_Number'].tolist()))
+    total_invoices: np.ndarray = fInvoices['Invoice_Number'].unique()
     worked_invoices: list = [
         inv for inv in sales_invoices if inv in total_invoices]
     rev_category: pd.DataFrame = data.loc[
@@ -1241,20 +1189,72 @@ def plotting_period(end_date: datetime, months: int) -> datetime:
 
 def change_orientation(doc, method):
     current_section = doc.sections[-1]
+
     new_section = document.add_section(WD_SECTION.NEW_PAGE)
-    if method == 'l':
+    if method == 'l':  # simple letter "L"
         new_width, new_height = current_section.page_height, current_section.page_width
         new_section.orientation = WD_ORIENT.LANDSCAPE
+        new_section.left_margin = Inches(0.4)
+        new_section.right_margin = Inches(0.4)
+        new_section.top_margin = Inches(0.4)
+        new_section.bottom_margin = Inches(0.4)
     else:
         new_height, new_width, = current_section.page_width, current_section.page_height
         new_section.orientation = WD_ORIENT.PORTRAIT
+        new_section.left_margin = Inches(0.4)
+        new_section.right_margin = Inches(0.4)
+        new_section.top_margin = Inches(0.4)
+        new_section.bottom_margin = Inches(0.4)
     new_section.page_width = new_width
     new_section.page_height = new_height
 
     return new_section
 
 
-df_pl: dict = profitandloss(basic_pl=True, data=merged, start_date=start_date, end_date=end_date, full_pl=True)
+company_id = 0
+end_date: datetime = datetime(year=2024, month=7, day=31)
+start_date: datetime = datetime(year=end_date.year - 1, month=1, day=1)
+sys_cut_off: datetime = datetime(year=2020, month=11, day=1)
+VOUCHER_TYPES: list = ['Project Invoice',
+                       'Contract Invoice', 'SERVICE INVOICE', 'Sales Invoice']
+
+cleaned_data: dict = preprocessing(data=data_sources(company_id=0))
+fGL: pd.DataFrame = cleaned_data['fGL']
+dEmployee: pd.DataFrame = cleaned_data['dEmployee']
+dCoAAdler: pd.DataFrame = cleaned_data['dCoAAdler']
+merged: pd.DataFrame = pd.merge(
+    left=fGL, right=dCoAAdler, on='Ledger_Code', how='left')
+fInvoices: pd.DataFrame = cleaned_data['fInvoices']
+fBudget: pd.DataFrame = cleaned_data['fBudget']
+fCollection: pd.DataFrame = cleaned_data['fCollection']
+dCustomers: pd.DataFrame = cleaned_data['dCustomers']
+dJobs: pd.DataFrame = cleaned_data['dJobs']
+
+financial_periods_bs: list = sorted(list(
+    set([end_date, datetime(year=end_date.year - 1, month=end_date.month, day=end_date.day)] + list(
+        pd.date_range(start=fGL['Voucher Date'].min(), end=end_date, freq='Y')))), reverse=True)
+bscombined: pd.DataFrame = pd.DataFrame()
+for f_year in financial_periods_bs:
+    bs: pd.DataFrame = balancesheet(data=merged, end_date=f_year).rename(columns={'Amount': f'{f_year.date()}'})
+    bscombined = pd.concat([bscombined, bs], axis=1)
+bscombined = bscombined.reset_index().rename(columns={'index': 'Description'})
+
+financial_periods_pl: list = sorted(list(
+    set([end_date] + pd.date_range(start=fGL['Voucher Date'].min(), end=end_date, freq='Y').to_pydatetime().tolist())),
+    reverse=True)
+plcombined: pd.DataFrame = pd.DataFrame()
+bu_plcombined = fGL['Bussiness Unit Name'].unique()
+for f_year in financial_periods_pl:
+    pl: dict = profitandloss(data=merged, end_date=f_year,
+                             start_date=max(sys_cut_off, datetime(year=f_year.year, month=1, day=1)),
+                             basic_pl=True, bu=bu_plcombined)
+    pl_period: pd.DataFrame = pl['df_basic']['cy_ytd_basic'].rename(columns={'Amount': f'{f_year.date()}'}).set_index(
+        keys='Description')
+    plcombined = pd.concat([plcombined, pl_period], axis=1)
+plcombined = plcombined.reset_index()
+
+df_pl: dict = profitandloss(basic_pl=True, data=merged, start_date=start_date, end_date=end_date, full_pl=True,
+                            bu=bu_plcombined)
 cy_cp_basic: pd.DataFrame = df_pl['df_basic']['cy_cp_basic']
 cy_ytd_basic: pd.DataFrame = df_pl['df_basic']['cy_ytd_basic']
 cy_pp_basic: pd.DataFrame = df_pl['df_basic']['cy_pp_basic']
@@ -1277,6 +1277,7 @@ document = Document()
 doc = first_page(document=document, report_date=end_date)
 document.add_page_break()
 
+change_orientation(method='p', doc=document)
 cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Services W.L.L')
 apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
 cy_cp_pl_report_title = document.add_paragraph().add_run('Profit & Loss for the current period')
@@ -1407,88 +1408,51 @@ for _, row in cy_ytd_basic_monthwise.iterrows():
 table_formatter(table_name=tbl_monthwise_basic, style_name='table_style_1', special=plheads)
 
 document.add_page_break()
-change_orientation(doc=document, method='p')
+
+rev_summary = plt.figure()
+rev_summary.set_figheight(6.29)
+rev_summary.set_figwidth(9.8)
+
+ini_shape = (4, 5)
+ax1 = plt.subplot2grid(shape=ini_shape, loc=(0, 0), colspan=4)
+ax2 = plt.subplot2grid(shape=ini_shape, loc=(1, 0), colspan=2)
+ax3 = plt.subplot2grid(shape=ini_shape, loc=(1, 2), colspan=2)
+ax4 = plt.subplot2grid(shape=ini_shape, loc=(2, 0), colspan=4)
+ax5 = plt.subplot2grid(shape=ini_shape, loc=(3, 0), colspan=2)
+ax6 = plt.subplot2grid(shape=ini_shape, loc=(3, 2), colspan=2)
+ax7 = plt.subplot2grid(shape=ini_shape, loc=(0, 4), colspan=1)
+ax8 = plt.subplot2grid(shape=ini_shape, loc=(1, 4), colspan=1)
+ax9 = plt.subplot2grid(shape=ini_shape, loc=(2, 4), colspan=1)
+ax10 = plt.subplot2grid(shape=ini_shape, loc=(3, 4), colspan=1)
+
 df_rev: dict = revenue(end_date=end_date, data=merged)
 rev_division: pd.DataFrame = df_rev['rev_division']
+
 rev_division_plot: pd.DataFrame = rev_division.copy()
-
-rev_division_line: pd.DataFrame = rev_division_plot.loc[(rev_division_plot['Voucher Date'] <= end_date) & (
-        rev_division_plot['Voucher Date'] >= plotting_period(end_date=end_date, months=6))].pivot_table(
-    index='Voucher Date', columns='Second_Level_Group_Name', values='Amount',
-    aggfunc='sum', fill_value=0).reset_index().rename(columns={'Voucher Date': 'Period'}).set_index(keys='Period')
-rev_division_pie_ytd: pd.DataFrame = rev_division_plot.loc[(rev_division_plot['Voucher Date'] <= end_date) & (
-        rev_division_plot['Voucher Date'] >= datetime(year=end_date.year, month=1, day=1)), [
-    'Second_Level_Group_Name', 'Amount']].groupby(by='Second_Level_Group_Name').sum().reset_index().rename(
-    columns={'Second_Level_Group_Name': 'Category'}).set_index(keys='Category')
-rev_division_pie_month: pd.DataFrame = rev_division_plot.loc[(rev_division_plot['Voucher Date'] <= end_date) & (
-        rev_division_plot['Voucher Date'] >= datetime(year=end_date.year, month=end_date.month, day=1)), [
-    'Second_Level_Group_Name', 'Amount']].rename(columns={'Second_Level_Group_Name': 'Category'}).set_index(
-    keys='Category')
-
-rev_div_buf = BytesIO()
-
-rev_div, (manpower, project) = plt.subplots(nrows=2, ncols=1)
-plt.style.use('ggplot')
-manpower.plot(rev_division_line.index, rev_division_line['Manpower'], label='Manpower')
-project.plot(rev_division_line.index, rev_division_line['Projects'], label='Projects')
-manpower.set_title('Manpower Division Monthly Revenue')
-project.set_title('ELV Division Monthly Revenue')
-manpower.set_xticks(ticks=rev_division_line.index, labels=[i.strftime('%b') for i in rev_division_line.index])
-project.set_xticks(ticks=rev_division_line.index, labels=[i.strftime('%b') for i in rev_division_line.index])
-
-current_values_project = project.get_yticks()
-project.set_yticklabels(['{:,}'.format(int(i)) for i in current_values_project])
-
-current_values_project = manpower.get_yticks()
-manpower.set_yticklabels(['{:,}'.format(int(i)) for i in current_values_project])
-
-manpower.grid()
-project.grid()
-plt.tight_layout()
-plt.savefig(rev_div_buf, format='png')
-plt.close(rev_div)
-
-rev_div_total_buf = BytesIO()
-div_total, (month_div_pie, ytd_div_pie) = plt.subplots(nrows=2, ncols=1)
-plt.style.use('ggplot')
-month_div_pie.set_title('Month')
-month_div_pie.pie(x=rev_division_pie_month['Amount'], labels=rev_division_pie_month.index, autopct='%.1f%%')
-ytd_div_pie.set_title('YTD')
-ytd_div_pie.pie(x=rev_division_pie_ytd['Amount'], labels=rev_division_pie_ytd.index, autopct='%.1f%%')
-plt.savefig(rev_div_total_buf, format='png')
-plt.close(div_total)
-
 rev_division = rev_division.loc[(rev_division['Voucher Date'] <= end_date) & (
         rev_division['Voucher Date'] >= plotting_period(end_date=end_date, months=6))].pivot_table(
     index='Second_Level_Group_Name', columns='Voucher Date', values='Amount',
     aggfunc='sum', fill_value=0).reset_index().rename(columns={'Second_Level_Group_Name': 'Description'})
 
-cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Services W.L.L')
-apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
-rev_div_report_title = document.add_paragraph().add_run('Division wise monthly revenue')
-apply_style_properties(rev_div_report_title, style_picker(name='report_title'))
+rev_division_line: pd.DataFrame = rev_division_plot.loc[(rev_division_plot['Voucher Date'] <= end_date) & (
+        rev_division_plot['Voucher Date'] >= plotting_period(end_date=end_date, months=6))].pivot_table(
+    index='Voucher Date', columns='Second_Level_Group_Name', values='Amount',
+    aggfunc='sum', fill_value=0).reset_index().rename(columns={'Voucher Date': 'Period'}).set_index(keys='Period')
 
-tbl_monthwise_rev_div = document.add_table(rows=1, cols=rev_division.shape[1])
-heading_cells = tbl_monthwise_rev_div.rows[0].cells
+rev_division_pie_ytd: pd.DataFrame = rev_division_plot.loc[(rev_division_plot['Voucher Date'] <= end_date) & (
+        rev_division_plot['Voucher Date'] >= datetime(year=end_date.year, month=1, day=1)), [
+    'Second_Level_Group_Name', 'Amount']].groupby(by='Second_Level_Group_Name').sum().reset_index().rename(
+    columns={'Second_Level_Group_Name': 'Category'}).set_index(keys='Category')
 
-for i in range(rev_division.shape[1]):
-    if i == 0:
-        heading_cells[i].text = 'Description'
-    else:
-        heading_cells[i].text = list(rev_division.columns)[i].strftime('%b')
-
-for _, row in rev_division.iterrows():
-    cells = tbl_monthwise_rev_div.add_row().cells
-    for j in range(len(row)):
-        if j == 0:
-            cells[0].text = str(row['Description'])
-        else:
-            cells[j].text = number_format(row.iloc[j])
-
-table_formatter(table_name=tbl_monthwise_rev_div, style_name='table_style_1', special=plheads)
-document.add_page_break()
+rev_division_pie_month: pd.DataFrame = rev_division_plot.loc[(rev_division_plot['Voucher Date'] <= end_date) & (
+        rev_division_plot['Voucher Date'] >= datetime(year=end_date.year, month=end_date.month, day=1)), [
+    'Second_Level_Group_Name', 'Amount']].rename(columns={'Second_Level_Group_Name': 'Category'}).set_index(
+    keys='Category')
 
 rev_category: pd.DataFrame = df_rev['rev_category']
+
+rev_category_plot: pd.DataFrame = rev_category.copy()
+
 rev_category = rev_category.loc[(rev_category['Voucher Date'] <= end_date) & (
         rev_category['Voucher Date'] >= plotting_period(end_date=end_date, months=6))].pivot_table(index='Type',
                                                                                                    columns='Voucher '
@@ -1497,61 +1461,74 @@ rev_category = rev_category.loc[(rev_category['Voucher Date'] <= end_date) & (
                                                                                                    aggfunc='sum',
                                                                                                    fill_value=0).reset_index().rename(
     columns={'Type': 'Description'})
+
+rev_category_line: pd.DataFrame = rev_category_plot.loc[(rev_category_plot['Voucher Date'] <= end_date) & (
+        rev_category_plot['Voucher Date'] >= plotting_period(end_date=end_date, months=6))].pivot_table(
+    index='Voucher Date', columns='Type', values='Amount',
+    aggfunc='sum', fill_value=0).reset_index().rename(columns={'Voucher Date': 'Period'}).set_index(keys='Period')
+
 rev_category_pie: pd.DataFrame = df_rev['rev_category']
 rev_category_pie_ytd: pd.DataFrame = rev_category_pie.loc[(rev_category_pie['Voucher Date'] <= end_date) & (
         rev_category_pie['Voucher Date'] >= datetime(year=end_date.year, month=1, day=1)), ['Type',
                                                                                             'Amount']].groupby(
     by='Type').sum()
+
 rev_category_pie_month: pd.DataFrame = rev_category_pie.loc[(rev_category_pie['Voucher Date'] <= end_date) & (
         rev_category_pie['Voucher Date'] >= datetime(year=end_date.year, month=end_date.month, day=1)), ['Type',
                                                                                                          'Amount']].groupby(
     by='Type').sum()
 
-rev_cat_total_buf = BytesIO()
-cat_total, (month_cat_pie, ytd_cat_pie) = plt.subplots(nrows=2, ncols=1)
-plt.style.use('ggplot')
-month_cat_pie.set_title('Month')
-month_cat_pie.pie(x=rev_category_pie_month['Amount'], labels=rev_category_pie_month.index, autopct='%.0f%%')
-ytd_cat_pie.set_title('YTD')
-ytd_cat_pie.pie(x=rev_category_pie_ytd['Amount'], labels=rev_category_pie_ytd.index, autopct='%.0f%%')
-plt.savefig(rev_cat_total_buf, format='png')
-plt.close(cat_total)
+ax1.table(cellText=[[j[0]] + [f'{i:,.0f}' for i in j if isinstance(i, float)] for j in rev_category.values],
+          colLabels=['Description'] + [i.strftime('%b') for i in rev_category.columns if i != 'Description'],
+          cellLoc='left', loc='best')
+ax1.set_title('Market/Related-party sales')
+ax1.axis('off')
+ax2.plot([i.strftime('%b') for i in rev_category_line.index], rev_category_line['Market'])
+ax2.set_yticklabels(['{:,}'.format(int(i)) for i in ax2.get_yticks()])
+ax2.set_title('Market Sales')
+ax3.plot([i.strftime('%b') for i in rev_category_line.index], rev_category_line['Related'])
+ax3.set_yticklabels(['{:,}'.format(int(i)) for i in ax3.get_yticks()])
+ax3.set_title('Related Sales')
 
-cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Services W.L.L')
-apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
-rev_cat_report_title = document.add_paragraph().add_run('Market/Related-Party monthly revenue')
-apply_style_properties(rev_cat_report_title, style_picker(name='report_title'))
+ax4.table(cellText=[[j[0]] + [f'{i:,.0f}' for i in j if isinstance(i, float)] for j in rev_division.values],
+          colLabels=['Description'] + [i.strftime('%b') for i in rev_division.columns if i != 'Description'],
+          cellLoc='left', loc='best')
 
-tbl_monthwise_rev_cat = document.add_table(rows=1, cols=rev_category.shape[1])
-heading_cells = tbl_monthwise_rev_cat.rows[0].cells
+ax4.set_title('Division wise monthly sales')
+ax4.axis('off')
 
-for i in range(rev_category.shape[1]):
-    if i == 0:
-        heading_cells[i].text = 'Description'
-    else:
-        heading_cells[i].text = list(rev_category.columns)[i].strftime('%b')
+ax5.plot([i.strftime('%b') for i in rev_division_line.index], rev_division_line['Manpower'])
+ax5.set_yticklabels(['{:,}'.format(int(i)) for i in ax5.get_yticks()])
+ax5.set_title('Manpower Sales')
+ax6.plot([i.strftime('%b') for i in rev_division_line.index], rev_division_line['Projects'])
+ax6.set_yticklabels(['{:,}'.format(int(i)) for i in ax6.get_yticks()])
+ax6.set_title('Projects Sales')
+ax7.pie(x=rev_category_pie_month['Amount'], labels=rev_category_pie_month.index, autopct='%.0f%%', labeldistance=1,
+        pctdistance=0.3)
+ax7.set_title('Month')
 
-for _, row in rev_category.iterrows():
-    cells = tbl_monthwise_rev_cat.add_row().cells
-    for j in range(len(row)):
-        if j == 0:
-            cells[0].text = str(row['Description'])
-        else:
-            cells[j].text = number_format(row.iloc[j])
+ax8.pie(x=rev_category_pie_ytd['Amount'], labels=rev_category_pie_ytd.index, autopct='%.0f%%', labeldistance=1,
+        pctdistance=0.3)
+ax8.set_title('Year')
 
-table_formatter(table_name=tbl_monthwise_rev_cat, style_name='table_style_1', special=[])
-document.add_page_break()
-rev_div_buf.seek(0)
-doc.add_picture(rev_div_buf)
-document.add_page_break()
-rev_div_total_buf.seek(0)
-doc.add_picture(rev_div_total_buf)
-document.add_page_break()
-rev_cat_total_buf.seek(0)
-doc.add_picture(rev_cat_total_buf)
-document.add_page_break()
+ax9.pie(x=rev_division_pie_month['Amount'], labels=rev_division_pie_month.index, autopct='%.1f%%', labeldistance=1,
+        pctdistance=0.5)
+ax9.set_title('Month')
 
-change_orientation(doc=document, method='l')
+ax10.pie(x=rev_division_pie_ytd['Amount'], labels=rev_division_pie_ytd.index, autopct='%.1f%%', labeldistance=1,
+         pctdistance=0.5)
+ax10.set_title('Year')
+
+plt.tight_layout()
+
+buf_revenue = BytesIO()
+plt.tight_layout()
+plt.savefig(buf_revenue, format='png', dpi=2400)
+plt.close(rev_summary)
+buf_revenue.seek(0)
+doc.add_picture(buf_revenue)
+doc.add_page_break()
+
 cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Services W.L.L')
 apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
 cy_mw_bs_report_title = document.add_paragraph().add_run('Balance sheet month wise')
@@ -1679,41 +1656,47 @@ document.add_page_break()
 for customer in customer_list:
     cy_cp_pl_company_title = document.add_paragraph().add_run(customer.upper())
     apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
-    tbl_cust_main = document.add_table(rows=2, cols=3)
+    tbl_cust_main = document.add_table(rows=2, cols=4)
     tbl_cust_main_th = tbl_cust_main.rows[0]
     tbl_cust_main_th.cells[0].text = 'Date of Establishment'
     tbl_cust_main_th.cells[1].text = 'Customer Since'
     tbl_cust_main_th.cells[2].text = 'Salesperson'
+    tbl_cust_main_th.cells[3].text = 'Balance'
     tbl_cust_main_td = tbl_cust_main.rows[1]
     tbl_cust_main_td.cells[0].text = str(customer_info[customer]['date_established'])
     tbl_cust_main_td.cells[1].text = str(customer_info[customer]['customer_since'])
     tbl_cust_main_td.cells[2].text = ' '.join(
         str(customer_info[customer]['last_sales_person']).split(sep=' ')[:2]).title()
-    tbl_cust_main.style = 'Table Grid'
+    tbl_cust_main_td.cells[3].text = number_format(num=customer_info[customer]['outstanding_bal'])
+    table_formatter(table_name=tbl_cust_main, style_name='table_style_1', special=[])
 
-    tbl_cust_rev = document.add_table(rows=4, cols=4)
-    tbl_cust_rev_th_1 = tbl_cust_rev.rows[0]
-    tbl_cust_rev_th_1.cells[0].text = 'CY CP Revenue'
+    tbl_cust_rev_1 = document.add_table(rows=2, cols=4)
+    tbl_cust_rev_th_1 = tbl_cust_rev_1.rows[0]
+    tbl_cust_rev_th_1.cells[0].text = f'CY CP Revenue\n({end_date.strftime("%B")} Month)'
     tbl_cust_rev_th_1.cells[1].text = 'CY YTD Revenue'
     tbl_cust_rev_th_1.cells[2].text = 'CY CP Rev \nContribution'
-    tbl_cust_rev_th_1.cells[3].text = 'CY PP Revenue'
-    tbl_cust_rev_td_1 = tbl_cust_rev.rows[1]
-    tbl_cust_rev_td_1.cells[0].text = str(customer_info[customer]['cy_cp_rev'])
-    tbl_cust_rev_td_1.cells[1].text = str(customer_info[customer]['cy_ytd_rev'])
+    tbl_cust_rev_th_1.cells[
+        3].text = f'CY PP Revenue\n({(end_date.replace(day=1) - timedelta(days=1)).strftime("%B")} Month)'
+    tbl_cust_rev_td_1 = tbl_cust_rev_1.rows[1]
+    tbl_cust_rev_td_1.cells[0].text = number_format(num=customer_info[customer]['cy_cp_rev'])
+    tbl_cust_rev_td_1.cells[1].text = number_format(num=customer_info[customer]['cy_ytd_rev'])
     tbl_cust_rev_td_1.cells[2].text = str(customer_info[customer]['cy_cp_rev_contrib_pct'])
-    tbl_cust_rev_td_1.cells[3].text = str(customer_info[customer]['cy_pp_rev'])
+    tbl_cust_rev_td_1.cells[3].text = number_format(num=customer_info[customer]['cy_pp_rev'])
+    table_formatter(table_name=tbl_cust_rev_1, style_name='table_style_1', special=[])
 
-    tbl_cust_rev_th_2 = tbl_cust_rev.rows[2]
+    tbl_cust_rev_2 = document.add_table(rows=2, cols=4)
+    tbl_cust_rev_th_2 = tbl_cust_rev_2.rows[0]
     tbl_cust_rev_th_2.cells[0].text = 'PY CP Revenue'
     tbl_cust_rev_th_2.cells[1].text = 'PY YTD Revenue'
     tbl_cust_rev_th_2.cells[2].text = 'CY YTD Rev \nContribution'
     tbl_cust_rev_th_2.cells[3].text = 'Total Revenue Made'
-    tbl_cust_rev_td_2 = tbl_cust_rev.rows[3]
-    tbl_cust_rev_td_2.cells[0].text = str(customer_info[customer]['py_cp_rev'])
-    tbl_cust_rev_td_2.cells[1].text = str(customer_info[customer]['py_ytd_rev'])
+    tbl_cust_rev_td_2 = tbl_cust_rev_2.rows[1]
+
+    tbl_cust_rev_td_2.cells[0].text = number_format(num=customer_info[customer]['py_cp_rev'])
+    tbl_cust_rev_td_2.cells[1].text = number_format(num=customer_info[customer]['py_ytd_rev'])
     tbl_cust_rev_td_2.cells[2].text = str(customer_info[customer]['cy_ytd_rev_contrib_pct'])
-    tbl_cust_rev_td_2.cells[3].text = str(customer_info[customer]['total_revenue'])
-    tbl_cust_rev.style = 'Table Grid'
+    tbl_cust_rev_td_2.cells[3].text = number_format(num=customer_info[customer]['total_revenue'])
+    table_formatter(table_name=tbl_cust_rev_2, style_name='table_style_1', special=[])
 
     tbl_cust_col = document.add_table(rows=2, cols=4)
     tbl_cust_col_th = tbl_cust_col.rows[0]
@@ -1722,12 +1705,12 @@ for customer in customer_list:
     tbl_cust_col_th.cells[2].text = 'Median Collection\nDays'
     tbl_cust_col_th.cells[3].text = 'Last Collection Date\n and Amount'
     tbl_cust_col_td = tbl_cust_col.rows[1]
-    tbl_cust_col_td.cells[0].text = str(customer_info[customer]['credit_score'])
-    tbl_cust_col_td.cells[1].text = str(customer_info[customer]['credit_days'])
+    tbl_cust_col_td.cells[0].text = number_format(customer_info[customer]['credit_score'])
+    tbl_cust_col_td.cells[1].text = number_format(num=customer_info[customer]['credit_days'])
     tbl_cust_col_td.cells[2].text = str(customer_info[customer]['collection_median'])
     tbl_cust_col_td.cells[
-        3].text = f"{str(customer_info[customer]['last_receipt_amt'])}\n{str(customer_info[customer]['last_receipt_dt'])}"
-    tbl_cust_col.style = 'Table Grid'
+        3].text = f"{number_format(num=customer_info[customer]['last_receipt_amt'])}\n{str(customer_info[customer]['last_receipt_dt'])}"
+    table_formatter(table_name=tbl_cust_col, style_name='table_style_1', special=[])
 
     tbl_cust_gp = document.add_table(rows=2, cols=4)
     tbl_cust_gp_th = tbl_cust_gp.rows[0]
@@ -1736,11 +1719,11 @@ for customer in customer_list:
     tbl_cust_gp_th.cells[2].text = 'ROI Month'
     tbl_cust_gp_th.cells[3].text = 'ROI YTD'
     tbl_cust_gp_td = tbl_cust_gp.rows[1]
-    tbl_cust_gp_td.cells[0].text = str(customer_info[customer]['customer_gp_cp'])
-    tbl_cust_gp_td.cells[1].text = str(customer_info[customer]['customer_gp_ytd'])
+    tbl_cust_gp_td.cells[0].text = number_format(num=customer_info[customer]['customer_gp_cp'])
+    tbl_cust_gp_td.cells[1].text = number_format(num=customer_info[customer]['customer_gp_ytd'])
     tbl_cust_gp_td.cells[2].text = str(customer_info[customer]['cy_cp_roi'])
     tbl_cust_gp_td.cells[3].text = str(customer_info[customer]['cy_ytd_roi'])
-    tbl_cust_gp.style = 'Table Grid'
+    table_formatter(table_name=tbl_cust_gp, style_name='table_style_1', special=[])
 
     fig, ((age_tbl, age_pie), (rev_tbl, rev_bar)) = plt.subplots(nrows=2, ncols=2)
 
@@ -1805,57 +1788,65 @@ for salesperson in salesperson_list:
     full_name: str = f'{salutation}{salesperson_name}'
     cy_cp_pl_company_title = document.add_paragraph().add_run(full_name)
     apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
-    tbl_salesman_main = document.add_table(rows=4, cols=2)
-    tbl_salesman_main_th_1 = tbl_salesman_main.rows[0]
+    tbl_salesman_main_1 = document.add_table(rows=2, cols=2)
+    tbl_salesman_main_th_1 = tbl_salesman_main_1.rows[0]
     tbl_salesman_main_th_1.cells[0].text = 'Date of Join'
     tbl_salesman_main_th_1.cells[1].text = 'New Customers Added'
 
-    tbl_salesman_main_td_1 = tbl_salesman_main.rows[1]
+    tbl_salesman_main_td_1 = tbl_salesman_main_1.rows[1]
     tbl_salesman_main_td_1.cells[0].text = str(salesperson_stats[salesperson]['doj'])
-    tbl_salesman_main_td_1.cells[1].text = str(salesperson_stats[salesperson]['new_customers_added'])
+    tbl_salesman_main_td_1.cells[1].text = number_format(num=salesperson_stats[salesperson]['new_customers_added'])
+    table_formatter(table_name=tbl_salesman_main_1, style_name='table_style_1', special=[])
 
-    tbl_salesman_main_th_2 = tbl_salesman_main.rows[2]
+    tbl_salesman_main_2 = document.add_table(rows=2, cols=2)
+    tbl_salesman_main_th_2 = tbl_salesman_main_2.rows[0]
     tbl_salesman_main_th_2.cells[0].text = 'CP Target'
     tbl_salesman_main_th_2.cells[1].text = 'YTD Target'
 
-    tbl_salesman_main_td_2 = tbl_salesman_main.rows[3]
-    tbl_salesman_main_td_2.cells[0].text = str(salesperson_stats[salesperson]['cp_target'])
-    tbl_salesman_main_td_2.cells[1].text = str(salesperson_stats[salesperson]['ytd_target'])
-    tbl_salesman_main.style = 'Table Grid'
+    tbl_salesman_main_td_2 = tbl_salesman_main_2.rows[1]
+    tbl_salesman_main_td_2.cells[0].text = number_format(num=salesperson_stats[salesperson]['cp_target'])
+    tbl_salesman_main_td_2.cells[1].text = number_format(num=salesperson_stats[salesperson]['ytd_target'])
+    table_formatter(table_name=tbl_salesman_main_2, style_name='table_style_1', special=[])
 
-    tbl_salesman_rev = document.add_table(rows=4, cols=2)
-    tbl_salesman_rev_th_1 = tbl_salesman_rev.rows[0]
+    tbl_salesman_rev_1 = document.add_table(rows=2, cols=2)
+    tbl_salesman_rev_th_1 = tbl_salesman_rev_1.rows[0]
     tbl_salesman_rev_th_1.cells[0].text = 'CY CP Revenue'
     tbl_salesman_rev_th_1.cells[1].text = 'CY YTD Revenue'
 
-    tbl_salesman_rev_td_1 = tbl_salesman_rev.rows[1]
-    tbl_salesman_rev_td_1.cells[0].text = str(salesperson_stats[salesperson]['cy_cp_rev'])
-    tbl_salesman_rev_td_1.cells[1].text = str(salesperson_stats[salesperson]['cy_ytd_rev'])
-    tbl_salesman_rev_th_2 = tbl_salesman_rev.rows[2]
+    tbl_salesman_rev_td_1 = tbl_salesman_rev_1.rows[1]
+    tbl_salesman_rev_td_1.cells[0].text = number_format(salesperson_stats[salesperson]['cy_cp_rev'])
+    tbl_salesman_rev_td_1.cells[1].text = number_format(salesperson_stats[salesperson]['cy_ytd_rev'])
+    table_formatter(table_name=tbl_salesman_rev_1, style_name='table_style_1', special=[])
+
+    tbl_salesman_rev_2 = document.add_table(rows=2, cols=2)
+    tbl_salesman_rev_th_2 = tbl_salesman_rev_2.rows[0]
     tbl_salesman_rev_th_2.cells[0].text = 'CY CP Own\nRevenue'
     tbl_salesman_rev_th_2.cells[1].text = 'CY YTD Own\nRevenue'
 
-    tbl_salesman_rev_td_2 = tbl_salesman_rev.rows[3]
-    tbl_salesman_rev_td_2.cells[0].text = str(salesperson_stats[salesperson]['cy_cp_rev_org'])
-    tbl_salesman_rev_td_2.cells[1].text = str(salesperson_stats[salesperson]['cy_ytd_rev_org'])
-    tbl_salesman_rev.style = 'Table Grid'
+    tbl_salesman_rev_td_2 = tbl_salesman_rev_2.rows[1]
+    tbl_salesman_rev_td_2.cells[0].text = number_format(num=salesperson_stats[salesperson]['cy_cp_rev_org'])
+    tbl_salesman_rev_td_2.cells[1].text = number_format(salesperson_stats[salesperson]['cy_ytd_rev_org'])
+    table_formatter(table_name=tbl_salesman_rev_2, style_name='table_style_1', special=[])
 
-    tbl_salesman_gp = document.add_table(rows=4, cols=2)
-    tbl_salesman_gp_th_1 = tbl_salesman_gp.rows[0]
+    tbl_salesman_gp_1 = document.add_table(rows=2, cols=2)
+    tbl_salesman_gp_th_1 = tbl_salesman_gp_1.rows[0]
     tbl_salesman_gp_th_1.cells[0].text = 'CY CP GP'
     tbl_salesman_gp_th_1.cells[1].text = 'CY YTD GP'
 
-    tbl_salesman_gp_td_1 = tbl_salesman_gp.rows[1]
-    tbl_salesman_gp_td_1.cells[0].text = str(salesperson_stats[salesperson]['cy_cp_gp'])
-    tbl_salesman_gp_td_1.cells[1].text = str(salesperson_stats[salesperson]['cy_ytd_gp'])
-    tbl_salesman_gp_th_2 = tbl_salesman_gp.rows[2]
+    tbl_salesman_gp_td_1 = tbl_salesman_gp_1.rows[1]
+    tbl_salesman_gp_td_1.cells[0].text = number_format(num=salesperson_stats[salesperson]['cy_cp_gp'])
+    tbl_salesman_gp_td_1.cells[1].text = number_format(num=salesperson_stats[salesperson]['cy_ytd_gp'])
+    table_formatter(table_name=tbl_salesman_gp_1, style_name='table_style_1', special=[])
+
+    tbl_salesman_gp_2 = document.add_table(rows=2, cols=2)
+    tbl_salesman_gp_th_2 = tbl_salesman_gp_2.rows[0]
     tbl_salesman_gp_th_2.cells[0].text = 'CY CP Revenue\nContribution'
     tbl_salesman_gp_th_2.cells[1].text = 'CY YTD Revenue\nContribution'
 
-    tbl_salesman_gp_td_2 = tbl_salesman_gp.rows[3]
+    tbl_salesman_gp_td_2 = tbl_salesman_gp_2.rows[1]
     tbl_salesman_gp_td_2.cells[0].text = str(salesperson_stats[salesperson]['cy_cp_rev_contrib_pct'])
     tbl_salesman_gp_td_2.cells[1].text = str(salesperson_stats[salesperson]['cy_ytd_rev_contrib_pct'])
-    tbl_salesman_gp.style = 'Table Grid'
+    table_formatter(table_name=tbl_salesman_gp_2, style_name='table_style_1', special=[])
     document.add_page_break()
 
 fig_rev, ((cp_in_guard, cp_in_elv), (cp_ex_guard, cp_ex_elv), (ytd_in_guard, ytd_in_elv),
@@ -1879,37 +1870,45 @@ ytd_ex_elv_df: pd.DataFrame = topcustomers(fInvoices=fInvoices, end_date=end_dat
                                            cnt=5)
 
 cp_in_guard.set_title('Current Month Internal Guarding', loc='left', **heading_format)
-t1 = cp_in_guard.table(cellText=cp_in_guard_df.values, colLabels=cp_in_guard_df.columns, cellLoc='center', loc='best')
+t1 = cp_in_guard.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in cp_in_guard_df.values],
+                       colLabels=cp_in_guard_df.columns, cellLoc='center', loc='best')
 cp_in_guard.axis('off')
 
 cp_in_elv.set_title('Current Month Internal ELV', loc='left', **heading_format)
-t2 = cp_in_elv.table(cellText=cp_in_elv_df.values, colLabels=cp_in_elv_df.columns, cellLoc='center', loc='best')
+t2 = cp_in_elv.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in cp_in_elv_df.values],
+                     colLabels=cp_in_elv_df.columns, cellLoc='center', loc='best')
 cp_in_elv.axis('off')
 
 cp_ex_guard.set_title('Current Month External Guarding', loc='left', **heading_format)
-t3 = cp_ex_guard.table(cellText=cp_ex_guard_df.values, colLabels=cp_ex_guard_df.columns, cellLoc='center', loc='best')
+t3 = cp_ex_guard.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in cp_ex_guard_df.values],
+                       colLabels=cp_ex_guard_df.columns, cellLoc='center', loc='best')
 cp_ex_guard.axis('off')
 
 cp_ex_elv.set_title('Current Month External ELV', loc='left', **heading_format)
-t4 = cp_ex_elv.table(cellText=cp_ex_elv_df.values, colLabels=cp_ex_elv_df.columns, cellLoc='center', loc='best')
+t4 = cp_ex_elv.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in cp_ex_elv_df.values],
+                     colLabels=cp_ex_elv_df.columns, cellLoc='center', loc='best')
 cp_ex_elv.axis('off')
 
 ytd_in_guard.set_title('Year to Date Internal Guarding', loc='left', **heading_format)
-t5 = ytd_in_guard.table(cellText=ytd_in_guard_df.values, colLabels=ytd_in_guard_df.columns, cellLoc='center',
+t5 = ytd_in_guard.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in ytd_in_guard_df.values],
+                        colLabels=ytd_in_guard_df.columns, cellLoc='center',
                         loc='best')
 ytd_in_guard.axis('off')
 
 ytd_in_elv.set_title('Year to Date Internal ELV', loc='left', **heading_format)
-t6 = ytd_in_elv.table(cellText=ytd_in_elv_df.values, colLabels=ytd_in_elv_df.columns, cellLoc='center', loc='best')
+t6 = ytd_in_elv.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in ytd_in_elv_df.values],
+                      colLabels=ytd_in_elv_df.columns, cellLoc='center', loc='best')
 ytd_in_elv.axis('off')
 
 ytd_ex_guard.set_title('Year to Date External Guarding', loc='left', **heading_format)
-t7 = ytd_ex_guard.table(cellText=ytd_ex_guard_df.values, colLabels=ytd_ex_guard_df.columns, cellLoc='center',
+t7 = ytd_ex_guard.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in ytd_ex_guard_df.values],
+                        colLabels=ytd_ex_guard_df.columns, cellLoc='center',
                         loc='best')
 ytd_ex_guard.axis('off')
 
 ytd_ex_elv.set_title('Year to Date External ELV', loc='left', **heading_format)
-t8 = ytd_ex_elv.table(cellText=ytd_ex_elv_df.values, colLabels=ytd_ex_elv_df.columns, cellLoc='center', loc='best')
+t8 = ytd_ex_elv.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in ytd_ex_elv_df.values],
+                      colLabels=ytd_ex_elv_df.columns, cellLoc='center', loc='best')
 ytd_ex_elv.axis('off')
 
 rev_plots: list = [t1, t2, t3, t4, t5, t6, t7, t8]
@@ -1925,7 +1924,7 @@ plt.tight_layout()
 
 rev_buf = BytesIO()
 plt.tight_layout()
-plt.savefig(rev_buf, format='png')
+plt.savefig(rev_buf, format='png', dpi=2400)
 plt.close(fig_rev)
 rev_buf.seek(0)
 doc.add_picture(rev_buf)
@@ -1940,19 +1939,23 @@ inc_py: pd.DataFrame = revenue_change(fInvoices=fInvoices, end_date=end_date, mo
 dec_py: pd.DataFrame = revenue_change(fInvoices=fInvoices, end_date=end_date, mode='pycp', order=False)
 
 cp_inc.set_title('Top 5 Customers with Increased\nRevenue compared to previous month', loc='left', **heading_format)
-t1 = cp_inc.table(cellText=inc_pp.values, colLabels=inc_pp.columns, cellLoc='center', loc='best')
+t1 = cp_inc.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in inc_pp.values], colLabels=inc_pp.columns,
+                  cellLoc='center', loc='best')
 cp_inc.axis('off')
 
 cp_dec.set_title('Top 5 Customers with Decreased\nRevenue compared to previous month', loc='left', **heading_format)
-t2 = cp_dec.table(cellText=dec_pp.values, colLabels=dec_pp.columns, cellLoc='center', loc='best')
+t2 = cp_dec.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in dec_pp.values], colLabels=dec_pp.columns,
+                  cellLoc='center', loc='best')
 cp_dec.axis('off')
 
 py_inc.set_title('Top 5 Customers with Increased\nRevenue compared to previouse year', loc='left', **heading_format)
-t3 = py_inc.table(cellText=inc_py.values, colLabels=inc_py.columns, cellLoc='center', loc='best')
+t3 = py_inc.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in inc_py.values], colLabels=inc_py.columns,
+                  cellLoc='center', loc='best')
 py_inc.axis('off')
 
 py_dec.set_title('Top 5 Customers with Decreased\nRevenue compared to previous year', loc='left', **heading_format)
-t4 = py_dec.table(cellText=dec_py.values, colLabels=dec_py.columns, cellLoc='center', loc='best')
+t4 = py_dec.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in dec_py.values], colLabels=dec_py.columns,
+                  cellLoc='center', loc='best')
 py_dec.axis('off')
 
 rev_cha_plots: list = [t1, t2, t3, t4]
@@ -1967,7 +1970,7 @@ for current_plot in rev_cha_plots:
 plt.tight_layout()
 rev_cha_buf = BytesIO()
 plt.tight_layout()
-plt.savefig(rev_cha_buf, format='png')
+plt.savefig(rev_cha_buf, format='png', dpi=2400)
 plt.close(fig_cha_rev)
 rev_cha_buf.seek(0)
 doc.add_picture(rev_cha_buf)
@@ -1976,7 +1979,7 @@ document.add_page_break()
 
 credit = document.add_paragraph(
     '\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nNadun Jayathunga\n')
-credit.add_run('Cheif Accountant\nNasser Bin Nawaf & Parners Holding W.L.L\n')
+credit.add_run('Chief Accountant\nNasser Bin Nawaf & Parners Holding W.L.L\n')
 credit.add_run('mail:njayathunga@nbn.qa\nTel:+974 4403 0407').italic = True
 
 document.core_properties.author = "Nadun Jayathunga"
