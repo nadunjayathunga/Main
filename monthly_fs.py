@@ -15,6 +15,7 @@ from io import BytesIO
 from data import company_data, company_info, doc_styles, table_style
 import statistics
 import numpy as np
+from itertools import islice
 import sys
 
 
@@ -28,7 +29,8 @@ def data_sources(company_id: int) -> dict:
                                             usecols=['Employee_Code',
                                                      'Employee_Name', 'Dept', 'doj', 'nationality', 'Gender',
                                                      'termination_date', 'ba', 'hra', 'tra', 'ma', 'oa', 'pda',
-                                                     'travel_cost', 'leave_policy'],
+                                                     'travel_cost', 'leave_policy', 'emp_type', 'dob',
+                                                     'termination_date', 'Designation'],
                                             index_col='Employee_Code')
     dCoAAdler: pd.DataFrame = pd.read_excel(io=path, sheet_name='dCoAAdler', index_col='Ledger_Code',
                                             usecols=['Third_Level_Group_Name', 'First_Level_Group_Name', 'Ledger_Code',
@@ -73,6 +75,11 @@ def data_sources(company_id: int) -> dict:
 
 
 def first_page(document, report_date: datetime):
+    new_section = document.sections[-1]
+    new_section.left_margin = Inches(0.4)
+    new_section.right_margin = Inches(0.4)
+    new_section.top_margin = Inches(0.4)
+    new_section.bottom_margin = Inches(0.4)
     document.add_picture(
         f'C:\Masters\images\logo\{company_info[company_id]["data"]["abbr"]}-logo.png')
     first = document.add_paragraph()
@@ -892,11 +899,11 @@ def customer_ratios(customers: list, fInvoices: pd.DataFrame, end_date: datetime
             (fGL['Ledger_Code'].isin(dCustomer.loc[dCustomer['Cus_Name'].isin([customer]), 'Ledger_Code'].tolist())) & (
                     fGL['Voucher Date'] <= end_date), 'Amount'].sum()
         cy_cp_rev_contrib_pct: float = cy_cp_rev / fInvoices.loc[(fInvoices['Invoice_Date'] <= end_date) & (
-                    fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=end_date.month,
-                                                          day=1)), 'Net_Amount'].sum() * 100
+                fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=end_date.month,
+                                                      day=1)), 'Net_Amount'].sum() * 100
         cy_ytd_rev_contrib_pct: float = cy_ytd_rev / fInvoices.loc[(fInvoices['Invoice_Date'] <= end_date) & (
-                    fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=1,
-                                                          day=1)), 'Net_Amount'].sum() * 100
+                fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=1,
+                                                      day=1)), 'Net_Amount'].sum() * 100
         monthly_rev: pd.DataFrame = fInvoices.loc[
             (fInvoices['Cus_Name'] == customer) & (fInvoices['Invoice_Date'] <= end_date) & (
                     fInvoices['Invoice_Date'] >= datetime(year=end_date.year, month=1, day=1)), ['Invoice_Date',
@@ -1189,26 +1196,112 @@ def plotting_period(end_date: datetime, months: int) -> datetime:
 
 def change_orientation(doc, method):
     current_section = doc.sections[-1]
-
     new_section = document.add_section(WD_SECTION.NEW_PAGE)
     if method == 'l':  # simple letter "L"
         new_width, new_height = current_section.page_height, current_section.page_width
         new_section.orientation = WD_ORIENT.LANDSCAPE
-        new_section.left_margin = Inches(0.4)
-        new_section.right_margin = Inches(0.4)
-        new_section.top_margin = Inches(0.4)
-        new_section.bottom_margin = Inches(0.4)
     else:
         new_height, new_width, = current_section.page_width, current_section.page_height
         new_section.orientation = WD_ORIENT.PORTRAIT
-        new_section.left_margin = Inches(0.4)
-        new_section.right_margin = Inches(0.4)
-        new_section.top_margin = Inches(0.4)
-        new_section.bottom_margin = Inches(0.4)
     new_section.page_width = new_width
     new_section.page_height = new_height
 
     return new_section
+
+
+def service_period(doj: datetime, end_date: datetime) -> str:
+    days_passed: int = (end_date - doj).days
+    service_ranges: list = [(365, '< One Year'), (730, '1-2 Years'), (1095, '2-3 Years'),
+                            (1460, '3-4 Years'), (float('inf'), '4 Years +')]
+    for threshold, label in service_ranges:
+        if days_passed <= threshold:
+            return label
+            break
+
+
+def emp_age(dob: datetime, end_date: datetime) -> str:
+    age: int = end_date.year - dob.year - ((end_date.month, end_date.day) < (dob.month, dob.day))
+    service_ranges: list = [(25, '< 25'), (35, '26-35 Years'), (45, '36-45 Years'), (float('inf'), '46 +')]
+    for threshold, label in service_ranges:
+        if age <= threshold:
+            return label
+            break
+
+
+def employee_related(data: pd.DataFrame) -> dict:
+    data.reset_index(inplace=True)
+    start_date: datetime = datetime(year=end_date.year, month=1, day=1)
+    total_pie_slices: int = 5
+    dEmployee: pd.DataFrame = data
+    dEmployee['termination_date'] = pd.to_datetime(dEmployee['termination_date'])
+    dEmployee['dob'] = pd.to_datetime(dEmployee['dob'])
+    dEmployee['doj'] = pd.to_datetime(dEmployee['doj'])
+    dEmployee = dEmployee.loc[(~dEmployee['Employee_Code'].isin(['ESS0015-OLD', 'ESS0016'])) & (
+        dEmployee['Employee_Code'].str.contains('ESS')) & (dEmployee['doj'] <= end_date) & (
+                                      (dEmployee['termination_date'] >= start_date) | (
+                                  dEmployee['termination_date'].isna()))]
+    emp_types: dict = {'MGMT': 'Staff', 'STAFF': 'Staff', 'ELV STAFF': 'Staff', 'LABOUR': 'Labour',
+                       'LABOUR A': 'Labour',
+                       'LABOUR A 2': 'Labour', 'LABOUR A 3': 'Labour', 'LABOUR A 4': 'Labour', 'ELV LABOUR': 'Labour'}
+    current_emp: pd.DataFrame = dEmployee.loc[
+        (dEmployee['termination_date'] > end_date) | (dEmployee['termination_date'].isna())]
+    gender: dict = current_emp.value_counts(subset='Gender').to_dict()
+
+    type: list = [emp_types[i] for i in current_emp['emp_type'].tolist()]
+    type: dict = {item: type.count(item) for item in set(type)}
+
+    dept: list = [i if i == 'ELV' else 'Guarding' for i in current_emp['Dept']]
+    dept: dict = {item: dept.count(item) for item in set(dept)}
+
+    designation: list = [i for i in current_emp['Designation'].tolist()]
+    designation: dict = {item.title(): designation.count(item) for item in set(designation)}
+    designation = dict(sorted(designation.items(), key=lambda item: item[1], reverse=True))
+    d_sliced: dict = dict(islice(designation.items(), total_pie_slices - 1))
+    d_sliced['Others'] = sum(
+        [i[1] for i in dict(islice(designation.items(), total_pie_slices - 1, len(designation))).items()])
+
+    nationality: list = [i for i in current_emp['nationality'].tolist()]
+    nationality: dict = {item.title(): nationality.count(item) for item in set(nationality)}
+    nationality = dict(sorted(nationality.items(), key=lambda item: item[1], reverse=True))
+    n_sliced: dict = dict(islice(nationality.items(), total_pie_slices - 1))
+    n_sliced['Others'] = sum(
+        [i[1] for i in dict(islice(nationality.items(), total_pie_slices - 1, len(nationality))).items()])
+
+    opening_emp = len(dEmployee.loc[(dEmployee['doj'] <= start_date - timedelta(days=1))])
+    joined_emp: int = len(dEmployee.loc[(dEmployee['doj'] >= start_date)])
+    resigned_emp: int = -len(dEmployee.loc[(dEmployee['termination_date'] <= end_date)])
+    closing_emp: int = opening_emp + joined_emp + resigned_emp
+    emp_movement: dict = {f'Employees at {start_date.date()}': opening_emp,
+                          'New Joiners': joined_emp, 'Resigned Employees': resigned_emp,
+                          f'Employees at {end_date.date()}': closing_emp}
+    current_emp.loc[:, 'Service'] = current_emp.loc[:, 'doj'].apply(func=service_period, args=[end_date])
+    current_emp.loc[:, 'Age'] = current_emp.loc[:, 'dob'].apply(func=emp_age, args=[end_date])
+
+    service: list = current_emp['Service'].tolist()
+    service: dict = {item: service.count(item) for item in set(service)}
+
+    age: list = current_emp['Age'].tolist()
+    age: dict = {item: age.count(item) for item in set(age)}
+
+    df_new_joiner: pd.DataFrame = dEmployee.loc[dEmployee['doj'] >= start_date, ['doj', 'Employee_Code']].rename(
+        columns={'doj': 'Period', 'Employee_Code': 'Joined'})
+    new_joiners = df_new_joiner.groupby(pd.Grouper(key='Period', freq='M')).count()
+
+    df_resigned: pd.DataFrame = dEmployee.loc[
+        dEmployee['termination_date'] <= end_date, ['Employee_Code', 'termination_date']].rename(
+        columns={'termination_date': 'Period', 'Employee_Code': 'Resigned'})
+    emp_resigned = df_resigned.groupby(pd.Grouper(key='Period', freq='M')).count()
+
+    total_employees: pd.DataFrame = pd.concat([new_joiners, emp_resigned], axis=1)
+    total_employees['Total Employees'] = (total_employees['Joined'] - total_employees['Resigned'])
+    total_employees.drop(columns=['Joined', 'Resigned'], inplace=True)
+    total_employees['Total Employees'] = total_employees['Total Employees'].cumsum() + opening_emp
+
+    employee_data: dict = {'Gender': gender, 'Type': type, 'Department': dept, 'Nationality': n_sliced,
+                           'Employee Age': age, 'Service Period': service, 'Designation': d_sliced,
+                           'Employee Movement': emp_movement,
+                           'new_joiner': new_joiners, 'resigned_emp': emp_resigned, 'total_employees': total_employees}
+    return employee_data
 
 
 company_id = 0
@@ -1238,6 +1331,7 @@ for f_year in financial_periods_bs:
     bs: pd.DataFrame = balancesheet(data=merged, end_date=f_year).rename(columns={'Amount': f'{f_year.date()}'})
     bscombined = pd.concat([bscombined, bs], axis=1)
 bscombined = bscombined.reset_index().rename(columns={'index': 'Description'})
+bscombined.fillna(value=0, inplace=True)
 
 financial_periods_pl: list = sorted(list(
     set([end_date] + pd.date_range(start=fGL['Voucher Date'].min(), end=end_date, freq='Y').to_pydatetime().tolist())),
@@ -1255,6 +1349,7 @@ plcombined = plcombined.reset_index()
 
 df_pl: dict = profitandloss(basic_pl=True, data=merged, start_date=start_date, end_date=end_date, full_pl=True,
                             bu=bu_plcombined)
+
 cy_cp_basic: pd.DataFrame = df_pl['df_basic']['cy_cp_basic']
 cy_ytd_basic: pd.DataFrame = df_pl['df_basic']['cy_ytd_basic']
 cy_pp_basic: pd.DataFrame = df_pl['df_basic']['cy_pp_basic']
@@ -1264,6 +1359,7 @@ cy_cp_basic_bud: pd.DataFrame = df_pl['df_basic']['cy_cp_basic_bud']
 cy_ytd_basic_bud: pd.DataFrame = df_pl['df_basic']['cy_ytd_basic_bud']
 
 sort_order: list = coa_ordering(dCoAAdler=dCoAAdler)
+
 cp_month: pd.DataFrame = pd.concat(
     [cy_cp_basic.set_index('Description'), cy_pp_basic.set_index('Description'), py_cp_basic.set_index('Description'),
      cy_cp_basic_bud.set_index('Description')],
@@ -1277,7 +1373,6 @@ document = Document()
 doc = first_page(document=document, report_date=end_date)
 document.add_page_break()
 
-change_orientation(method='p', doc=document)
 cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Services W.L.L')
 apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
 cy_cp_pl_report_title = document.add_paragraph().add_run('Profit & Loss for the current period')
@@ -1323,7 +1418,7 @@ apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'
 cy_cp_pl_full_report_title = document.add_paragraph().add_run('Complete Profit & Loss for the current period')
 apply_style_properties(cy_cp_pl_report_title, style_picker(name='report_title'))
 tbl_month_full = document.add_table(rows=1, cols=5)
-tbl_month_full.columns[0].width = Cm(7.5)
+tbl_month_full.columns[0].width = Cm(11)
 heading_cells = tbl_month_full.rows[0].cells
 heading_cells[0].text = 'Description'
 heading_cells[1].text = 'Current Month'
@@ -1358,7 +1453,7 @@ cy_ytd_pl_report_title = document.add_paragraph().add_run('Profit & Loss for Yea
 apply_style_properties(cy_cp_pl_report_title, style_picker(name='report_title'))
 
 tbl_ytd_basic = document.add_table(rows=1, cols=4)
-tbl_ytd_basic.columns[0].width = Cm(7.5)
+tbl_ytd_basic.columns[0].width = Cm(11)
 heading_cells = tbl_ytd_basic.rows[0].cells
 heading_cells[0].text = 'Description'
 heading_cells[1].text = 'YTD CY'
@@ -1410,8 +1505,8 @@ table_formatter(table_name=tbl_monthwise_basic, style_name='table_style_1', spec
 document.add_page_break()
 
 rev_summary = plt.figure()
-rev_summary.set_figheight(6.29)
-rev_summary.set_figwidth(9.8)
+rev_summary.set_figheight(7)
+rev_summary.set_figwidth(10.5)
 
 ini_shape = (4, 5)
 ax1 = plt.subplot2grid(shape=ini_shape, loc=(0, 0), colspan=4)
@@ -1533,6 +1628,11 @@ cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Servic
 apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
 cy_mw_bs_report_title = document.add_paragraph().add_run('Balance sheet month wise')
 apply_style_properties(cy_mw_bs_report_title, style_picker(name='report_title'))
+# bscombined['Description'] = pd.Categorical(bscombined['Description'],
+#                                                        categories=[k for k in sort_order.keys()],
+#                                                        ordered=True)
+# bscombined.sort_values(by='Description', inplace=True)
+
 
 tbl_yearly_bs = document.add_table(rows=1, cols=bscombined.shape[1])
 heading_cells = tbl_yearly_bs.rows[0].cells
@@ -1550,7 +1650,7 @@ for _, row in bscombined.iterrows():
         else:
             cells[j].text = f"{row.iloc[j]:,.0f}" if row.iloc[j] >= 0 else f"({abs(row.iloc[j]):,.0f})"
 
-tbl_yearly_bs.style = 'Table Grid'
+# table_formatter(table_name=tbl_yearly_bs, style_name='table_style_1', special=['Current Liabilities','Non-Current Liabilities','Total Liabilities','Total Equity','Current Assets','Non-Current Assets','Total Assets','Total Equity & Liabilities'])
 document.add_page_break()
 
 change_orientation(doc=document, method='p')
@@ -1967,7 +2067,6 @@ for current_plot in rev_cha_plots:
             cell.set_text_props(fontfamily='sans-serif', fontweight='bold')  # Set font name for header
         else:
             cell.set_fontsize(30)  # Set font size for data cells
-plt.tight_layout()
 rev_cha_buf = BytesIO()
 plt.tight_layout()
 plt.savefig(rev_cha_buf, format='png', dpi=2400)
@@ -1975,6 +2074,91 @@ plt.close(fig_cha_rev)
 rev_cha_buf.seek(0)
 doc.add_picture(rev_cha_buf)
 
+document.add_page_break()
+
+emp_data: dict = employee_related(data=dEmployee)
+
+hr_fig_1, ((gender, type), (dept, nationality)) = plt.subplots(nrows=2, ncols=2, figsize=(10.5, 7))
+
+gender.set_title('Gender')
+gender.pie(x=list(emp_data['Gender'].values()), labels=list(emp_data['Gender'].keys()), autopct='%.0f%%',
+           labeldistance=1, pctdistance=0.3)
+gender.axis('off')
+
+type.set_title('Category')
+type.pie(x=list(emp_data['Type'].values()), labels=list(emp_data['Type'].keys()), autopct='%.0f%%', labeldistance=1,
+         pctdistance=0.3)
+type.axis('off')
+
+dept.set_title('Department')
+dept.pie(x=list(emp_data['Department'].values()), labels=list(emp_data['Department'].keys()), autopct='%.0f%%',
+         labeldistance=1, pctdistance=0.3)
+dept.axis('off')
+
+nationality.set_title('Nationality')
+nationality.pie(x=list(emp_data['Nationality'].values()), labels=list(emp_data['Nationality'].keys()), autopct='%.0f%%',
+                labeldistance=1, pctdistance=0.3)
+nationality.axis('off')
+
+change_orientation(doc=document, method='l')
+hr_graph_1_buf = BytesIO()
+plt.tight_layout()
+plt.savefig(hr_graph_1_buf, format='png')
+plt.close(hr_fig_1)
+hr_graph_1_buf.seek(0)
+doc.add_picture(hr_graph_1_buf)
+document.add_page_break()
+
+hr_fig_2, ((age, service), (designation, movement)) = plt.subplots(nrows=2, ncols=2, figsize=(10.5, 7))
+age.set_title('Age')
+age.pie(x=list(emp_data['Employee Age'].values()), labels=list(emp_data['Employee Age'].keys()), autopct='%.0f%%',
+        labeldistance=1, pctdistance=0.3)
+age.axis('off')
+
+service.set_title('Service')
+service.pie(x=list(emp_data['Service Period'].values()), labels=list(emp_data['Service Period'].keys()),
+            autopct='%.0f%%', labeldistance=1, pctdistance=0.3)
+service.axis('off')
+
+designation.set_title('Designation')
+designation.pie(x=list(emp_data['Designation'].values()), labels=list(emp_data['Designation'].keys()), autopct='%.0f%%',
+                labeldistance=1, pctdistance=0.7)
+designation.axis('off')
+
+emp_move = pd.DataFrame(list(emp_data['Employee Movement'].items()), columns=['Description', '# of Emp'])
+
+movement.set_title('Movement')
+movement.table(cellText=[i for i in emp_move.values], colLabels=emp_move.columns, cellLoc='center', loc='center')
+movement.axis('off')
+
+hr_graph_2_buf = BytesIO()
+plt.tight_layout()
+plt.savefig(hr_graph_2_buf, format='png')
+plt.close(hr_fig_2)
+hr_graph_2_buf.seek(0)
+doc.add_picture(hr_graph_2_buf)
+document.add_page_break()
+
+hr_fig_3, (jo_re, total_staff) = plt.subplots(nrows=2, ncols=1, sharex=True)
+
+jo_re.set_title('New Joiners and Leavers')
+jo_re.plot([i.strftime('%b') for i in emp_data['new_joiner'].index], emp_data['new_joiner']['Joined'],
+           label='New Joiners')
+jo_re.plot([i.strftime('%b') for i in emp_data['new_joiner'].index], emp_data['resigned_emp']['Resigned'],
+           label='Resigned')
+jo_re.legend()
+
+total_staff.set_title('Total Manpower')
+total_staff.plot([i.strftime('%b') for i in emp_data['new_joiner'].index],
+                 emp_data['total_employees']['Total Employees'], label='Total Employees')
+
+change_orientation(doc=document, method='p')
+hr_graph_3_buf = BytesIO()
+plt.tight_layout()
+plt.savefig(hr_graph_3_buf, format='png')
+plt.close(hr_fig_3)
+hr_graph_3_buf.seek(0)
+doc.add_picture(hr_graph_3_buf)
 document.add_page_break()
 
 credit = document.add_paragraph(
@@ -1989,3 +2173,15 @@ document.core_properties.keywords = ("Chief Accountant\nNasser Bin Nawaf and Par
 doc.save('Monthly FS.docx')
 convert('Monthly FS.docx')
 os.unlink('Monthly FS.docx')
+
+# TODO plratios() should be shown
+# TODO bsratios() should be shown
+# TODO COLLECTION Table and line graph to plot
+# TODO NEW CUSTOMER SALES/ EXISTING CUSTOMER SALES to show
+# TODO Salesman wise revenue to show
+# TODO COHART to show
+# TODO Transportation cost per person and total monthly
+# TODO Accommodation cost per person and total monthly
+# TODO PRODUCTIVE / UNPRODUCTIVE MAN DAYS
+# TODO DIVISION WISE PROFITABLITY ELV AND GUARDING
+# TODO PROFITABILITY GRAPHS GUARDING / ELV / OVERALL GP and OVERALL NP
