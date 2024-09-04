@@ -24,14 +24,16 @@ def data_sources(company_id: int) -> dict:
     fGL: pd.DataFrame = pd.read_excel(io=path, sheet_name='fGL',
                                       usecols=['Bussiness Unit Name', 'Cost Center', 'Voucher Date', 'Credit Amount',
                                                'Debit Amount', 'Narration', 'Ledger_Code', 'Voucher Number',
-                                               'Transaction Type'])
+                                               'Transaction Type'],engine='calamine')
     dEmployee: pd.DataFrame = pd.read_excel(io=path, sheet_name='dEmployee',
                                             usecols=['Employee_Code',
                                                      'Employee_Name', 'Dept', 'doj', 'nationality', 'Gender',
                                                      'termination_date', 'ba', 'hra', 'tra', 'ma', 'oa', 'pda',
                                                      'travel_cost', 'leave_policy', 'emp_type', 'dob',
                                                      'termination_date', 'Designation'],
-                                            index_col='Employee_Code')
+                                            index_col='Employee_Code',dtype={'Employee_Name':str,'Dept':str,'doj':'datetime64[ns]',
+                                            'nationality':str,'Gender':str,'ba':float,'hra':float,'tra':float,'ma':float,'oa':float,
+                                            'pda':float,'travel_cost':int,'leave_policy':str,'emp_type':str,'dob':'datetime64[ns]','Designation':str})
     dCoAAdler: pd.DataFrame = pd.read_excel(io=path, sheet_name='dCoAAdler', index_col='Ledger_Code',
                                             usecols=['Third_Level_Group_Name', 'First_Level_Group_Name', 'Ledger_Code',
                                                      'Ledger_Name', 'Second_Level_Group_Name',
@@ -51,11 +53,9 @@ def data_sources(company_id: int) -> dict:
     fCreditNote: pd.DataFrame = pd.read_excel(io=path, sheet_name='fCreditNote',
                                               usecols=['Invoice_Number', 'Invoice_Date', 'Ledger_Code', 'Net_Amount',
                                                        'Order_ID'])
-
     fBudget: pd.DataFrame = pd.read_excel(io=path,
                                           usecols=['FY', 'Ledger_Code', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul',
                                                    'Aug', 'Sep', 'Oct', 'Nov', 'Dec'], sheet_name='fBudget')
-
     fCollection: pd.DataFrame = pd.read_excel(io=path, usecols=['Ledger_Code', 'Invoice Number', 'Invoice Amount',
                                                                 'Payment Voucher Number', 'Payment Date',
                                                                 'Invoice Date'], sheet_name='fCollection',
@@ -69,11 +69,13 @@ def data_sources(company_id: int) -> dict:
     dOrderAMC: pd.DataFrame = pd.read_excel(io=path, usecols=['Order_ID', 'Customer_Code', 'Employee_Code'],
                                             sheet_name='dOrderAMC')
     fTimesheet: pd.DataFrame = pd.read_excel(io=path, sheet_name='fTimesheet',
-                                             usecols=['cost_center', 'job_id', 'v_date'])
+                                             usecols=['cost_center', 'job_id', 'v_date'],dtype={'cost_center':str,'job_id':str},parse_dates=['v_date'],date_format='%m/%d/%Y')
+    fOT:pd.DataFrame = pd.read_excel(io=path,sheet_name='fOT',usecols=['date','Employee_Code','job_id','net'],dtype={'date':str,'Employee_Code':str,'job_id':str,'net':float},engine='calamine')
+    dExclude :pd.DataFrame = pd.read_excel(sheet_name='dExclude',io=path)
     return {'fGL': fGL, 'dEmployee': dEmployee, 'dCoAAdler': dCoAAdler, 'fOutSourceInv': fOutSourceInv,
             'fAMCInv': fAMCInv, 'fProInv': fProInv, 'fCreditNote': fCreditNote, 'dCustomers': dCustomers,
             'fBudget': fBudget, 'fCollection': fCollection, 'dContracts': dContracts, 'dCusOrder': dCusOrder,
-            'dOrderAMC': dOrderAMC, 'fTimesheet': fTimesheet}
+            'dOrderAMC': dOrderAMC, 'fTimesheet': fTimesheet,'fOT':fOT,'dExclude':dExclude}
 
 
 def first_page(document, report_date: datetime):
@@ -178,6 +180,8 @@ def preprocessing(data: dict) -> dict:
     dCusOrder: pd.DataFrame = data['dCusOrder']
     dOrderAMC: pd.DataFrame = data['dOrderAMC']
     fTimesheet: pd.DataFrame = data['fTimesheet']
+    fOT:pd.DataFrame = data['fOT']
+    dExclude:pd.DataFrame = data['dExclude']
 
     fGL['Cost Center'] = fGL['Cost Center'].str.split(
         '|', expand=True)[0].str.strip()  # ESS0012 | GAURAV VASHISTH
@@ -187,9 +191,9 @@ def preprocessing(data: dict) -> dict:
         to_replace={'Elite Security Services': 'GUARDING-ESS'}, inplace=True)
     fGL['Amount'] = fGL['Credit Amount'] - fGL['Debit Amount']
     fGL.drop(columns=['Credit Amount', 'Debit Amount'], inplace=True)
-    fGL['Voucher Date'] = fGL.apply(
-        lambda row: row['Voucher Date'] + relativedelta(day=31), axis=1)
-
+    # fGL['Voucher Date'] = fGL.apply(
+    #     lambda row: row['Voucher Date'] + relativedelta(day=31), axis=1)
+    fGL.loc[:,'Voucher Date'] = fGL['Voucher Date'] + pd.offsets.MonthEnd()
     dContracts['Order_ID'] = dContracts['Order_ID'].str.split('-', expand=True)[0]
     fOutSourceInv = pd.merge(
         left=fOutSourceInv, right=dCustomers, on='Customer_Code', how='left')
@@ -200,7 +204,6 @@ def preprocessing(data: dict) -> dict:
     fCreditNote['Net_Amount'] = fCreditNote['Net_Amount'] * -1
     fCreditNote = pd.merge(
         left=fCreditNote, right=dCustomers, on='Ledger_Code', how='left')
-
     fInvoices: pd.DataFrame = pd.concat(
         [fOutSourceInv, fAMCInv, fProInv, fCreditNote])
     dJobs: pd.DataFrame = pd.concat([dContracts, dCusOrder, dOrderAMC], ignore_index=True)
@@ -218,8 +221,12 @@ def preprocessing(data: dict) -> dict:
     fBudget['Bussiness Unit Name'] = 'GUARDING-ESS'
     fBudget.loc[fBudget['Fourth_Level_Group_Name'] == 'Expenses', 'Amount'] *= -1
     fCollection = receipts_recorded(data=fCollection)
+    fOT['date'] = fOT['date'].str.split(' ', expand=True)[4].str.strip()
+    fOT['date'] = pd.to_datetime(fOT['date'], format='%b-%Y')
+    fTimesheet = fTimesheet.loc[~fTimesheet['job_id'].isin(['discharged','not_joined'])]
+    fTimesheet.loc[:,'v_date'] = fTimesheet['v_date'] + pd.offsets.MonthEnd()
     return {'fGL': fGL, 'dEmployee': dEmployee, 'dCoAAdler': dCoAAdler, 'fInvoices': fInvoices, 'fBudget': fBudget,
-            'dCustomers': dCustomers, 'fCollection': fCollection, 'dJobs': dJobs, 'fTimesheet': fTimesheet}
+            'dCustomers': dCustomers, 'fCollection': fCollection, 'dJobs': dJobs, 'fTimesheet': fTimesheet,'fOT':fOT,'dExclude':dExclude}
 
 
 def coa_ordering(dCoAAdler: pd.DataFrame) -> list:
@@ -281,6 +288,14 @@ def coa_ordering(dCoAAdler: pd.DataFrame) -> list:
     coa_sort_order['Total Revenue'] = value
 
     sorted_data = dict(sorted(coa_sort_order.items(), key=lambda item: item[1]))
+
+    for i in ['Due From Related Parties','Due To Related Parties','Total Equity & Liabilities']:
+        if i == 'Due From Related Parties':
+            sorted_data['Due From Related Parties'] = sorted_data.get('Current Assets') - 0.01
+        elif i == 'Due To Related Parties':
+            sorted_data['Due To Related Parties'] = sorted_data.get('Current Liabilities') - 0.01
+        else:
+            sorted_data['Total Equity & Liabilities'] = sorted_data.get('Equity') + 0.01
 
     return sorted_data
 
@@ -729,17 +744,17 @@ def balancesheet(data: pd.DataFrame, end_date: datetime) -> pd.DataFrame:
     cl_row: pd.DataFrame = pd.DataFrame(
         data={'Amount': [cl]}, index=['Current Liabilities'])
     ncl_row: pd.DataFrame = pd.DataFrame(data={'Amount': [ncl]}, index=[
-        'Non-Current Liabilities'])
+        'Non Current Liabilities'])
     tl_row: pd.DataFrame = pd.DataFrame(
-        data={'Amount': [tl]}, index=['Total Liabilities'])
+        data={'Amount': [tl]}, index=['Liabilities'])
     ca_row: pd.DataFrame = pd.DataFrame(
         data={'Amount': [ca]}, index=['Current Assets'])
     nca_row: pd.DataFrame = pd.DataFrame(
-        data={'Amount': [nca]}, index=['Non-Current Assets'])
+        data={'Amount': [nca]}, index=['Non Current Assets'])
     ta_row: pd.DataFrame = pd.DataFrame(
-        data={'Amount': [ta]}, index=['Total Assets'])
+        data={'Amount': [ta]}, index=['Assets'])
     equity_row: pd.DataFrame = pd.DataFrame(
-        data={'Amount': [equity]}, index=['Total Equity'])
+        data={'Amount': [equity]}, index=['Equity'])
     tle_row: pd.DataFrame = pd.DataFrame(data={'Amount': [tle]}, index=[
         'Total Equity & Liabilities'])
 
@@ -768,6 +783,8 @@ def bsratios(bsdata: pd.DataFrame, pldata: pd.DataFrame) -> dict:
         roe: float = pldata.loc['Net Profit', current_period] / ((bsdata.loc['Total Equity', current_period] +
                                                                   bsdata.loc[
                                                                       'Total Equity', privious_period]) / 2) * 100
+        ratiosbs :dict = {'cr':current_ratio,'ato':asset_turnover,'roe':roe}
+        return ratiosbs
 
 
 def plratios(df_pl: pd.DataFrame) -> dict:
@@ -1118,7 +1135,7 @@ def collection(fCollection: pd.DataFrame, end_date: datetime, fGL: pd.DataFrame,
     fCollection1 = fCollection.loc[
         (fCollection['voucher_date'] >= start_date) & (fCollection['voucher_date'] <= end_date)]
     # convert collection date to last date of the month, so it can be grouped to know total collected per period.
-    fCollection1 = fCollection1.groupby(pd.Grouper(key='voucher_date', freq='M'))[
+    fCollection1 = fCollection1.groupby(pd.Grouper(key='voucher_date', freq='ME'))[
         'voucher_amount'].sum().reset_index().rename(columns={'voucher_date': 'Due Date', 'voucher_amount': 'Actual'})
     fCollection1 = fCollection1.loc[(fCollection1['Due Date'] >= start_date) & (fCollection1['Due Date'] <= end_date)]
 
@@ -1318,12 +1335,12 @@ def employee_related(data: pd.DataFrame) -> dict:
 
     df_new_joiner: pd.DataFrame = dEmployee.loc[dEmployee['doj'] >= start_date, ['doj', 'Employee_Code']].rename(
         columns={'doj': 'Period', 'Employee_Code': 'Joined'})
-    new_joiners = df_new_joiner.groupby(pd.Grouper(key='Period', freq='M')).count()
+    new_joiners = df_new_joiner.groupby(pd.Grouper(key='Period', freq='ME')).count()
 
     df_resigned: pd.DataFrame = dEmployee.loc[
         dEmployee['termination_date'] <= end_date, ['Employee_Code', 'termination_date']].rename(
         columns={'termination_date': 'Period', 'Employee_Code': 'Resigned'})
-    emp_resigned = df_resigned.groupby(pd.Grouper(key='Period', freq='M')).count()
+    emp_resigned = df_resigned.groupby(pd.Grouper(key='Period', freq='ME')).count()
 
     total_employees: pd.DataFrame = pd.concat([new_joiners, emp_resigned], axis=1)
     total_employees['Total Employees'] = (total_employees['Joined'] - total_employees['Resigned'])
@@ -1398,6 +1415,9 @@ fCollection: pd.DataFrame = cleaned_data['fCollection']
 dCustomers: pd.DataFrame = cleaned_data['dCustomers']
 dJobs: pd.DataFrame = cleaned_data['dJobs']
 fTimesheet: pd.DataFrame = cleaned_data['fTimesheet']
+fOT :pd.DataFrame = cleaned_data['fOT']
+dExclude :pd.DataFrame = cleaned_data['dExclude']
+
 
 financial_periods_bs: list = sorted(list(
     set([end_date, datetime(year=end_date.year - 1, month=end_date.month, day=end_date.day)] + list(
@@ -1818,10 +1838,10 @@ cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Servic
 apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
 cy_mw_bs_report_title = document.add_paragraph().add_run('Balance sheet month wise')
 apply_style_properties(cy_mw_bs_report_title, style_picker(name='report_title'))
-# bscombined['Description'] = pd.Categorical(bscombined['Description'],
-#                                                        categories=[k for k in sort_order.keys()],
-#                                                        ordered=True)
-# bscombined.sort_values(by='Description', inplace=True)
+bscombined['Description'] = pd.Categorical(bscombined['Description'],
+                                                       categories=[k for k in sort_order.keys()],
+                                                       ordered=True)
+bscombined.sort_values(by='Description', inplace=True)
 
 
 tbl_yearly_bs = document.add_table(rows=1, cols=bscombined.shape[1])
@@ -1840,7 +1860,7 @@ for _, row in bscombined.iterrows():
         else:
             cells[j].text = f"{row.iloc[j]:,.0f}" if row.iloc[j] >= 0 else f"({abs(row.iloc[j]):,.0f})"
 
-# table_formatter(table_name=tbl_yearly_bs, style_name='table_style_1', special=['Current Liabilities','Non-Current Liabilities','Total Liabilities','Total Equity','Current Assets','Non-Current Assets','Total Assets','Total Equity & Liabilities'])
+table_formatter(table_name=tbl_yearly_bs, style_name='table_style_1', special=['Current Liabilities','Non Current Liabilities','Liabilities','Equity','Current Assets','Non Current Assets','Assets','Total Equity & Liabilities'])
 document.add_page_break()
 
 change_orientation(doc=document, method='p')
@@ -2422,8 +2442,8 @@ doc.add_picture(pl_graph_buf)
 document.add_page_break()
 
 credit = document.add_paragraph(
-    '\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nNadun Jayathunga\n')
-credit.add_run('Chief Accountant\nNasser Bin Nawaf & Parners Holding W.L.L\n')
+    '\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nNadun Jayathunga\n')
+credit.add_run('Chief Accountant\nNasser Bin Nawaf & Partners Holding W.L.L\n')
 credit.add_run('mail:njayathunga@nbn.qa\nTel:+974 4403 0407').italic = True
 
 document.core_properties.author = "Nadun Jayathunga"
@@ -2436,4 +2456,3 @@ os.unlink('Monthly FS.docx')
 
 # TODO bsratios() should be shown
 # TODO COHART to show
-# TODO PROFITABILITY GRAPHS GUARDING / ELV / OVERALL GP and OVERALL NP
