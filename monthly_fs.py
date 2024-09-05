@@ -95,7 +95,7 @@ def first_page(document, report_date: datetime):
     new_section.footer_distance = Inches(0.1)
     logo = document.add_picture(
         f'C:\Masters\images\logo\{company_info[company_id]["data"]["abbr"]}-logo.png')
-    logo = document.paragraphs[-1] 
+    logo = document.paragraphs[-1]
     logo.alignment = WD_ALIGN_PARAGRAPH.CENTER
     first = document.add_paragraph()
     first.add_run('\n\n\n')
@@ -118,12 +118,13 @@ def first_page(document, report_date: datetime):
     return document
 
 
-def business_unit(row, dEmployee: pd.DataFrame,dCoAAdler:pd.DataFrame) -> str:
-    elv_groups :list = dCoAAdler.loc[dCoAAdler['First_Level_Group_Name'].isin(['Material Parts & Consumables - Projects',
-                                                                               'Maintenance - Projects','Depreciation - Projects',
-                                                                               'Others - Projects','Projects Revenue'])].index.tolist()
-    ledger_code :str = row['Ledger_Code']
-    cc :str = row['Cost Center']
+def business_unit(row, dEmployee: pd.DataFrame, dCoAAdler: pd.DataFrame) -> str:
+    elv_groups: list = dCoAAdler.loc[
+        dCoAAdler['First_Level_Group_Name'].isin(['Material Parts & Consumables - Projects',
+                                                  'Maintenance - Projects', 'Depreciation - Projects',
+                                                  'Others - Projects', 'Projects Revenue'])].index.tolist()
+    ledger_code: str = row['Ledger_Code']
+    cc: str = row['Cost Center']
 
     if ledger_code in elv_groups:
         return 'ELV-ESS'
@@ -197,9 +198,8 @@ def preprocessing(data: dict) -> dict:
     fGL['Cost Center'] = fGL['Cost Center'].str.split(
         '|', expand=True)[0].str.strip()  # ESS0012 | GAURAV VASHISTH
     fGL['Bussiness Unit Name'] = fGL.apply(
-        business_unit, axis=1, args=[dEmployee,dCoAAdler])
-    # fGL.replace(
-    #     to_replace={'Elite Security Services': 'GUARDING-ESS'}, inplace=True)
+        business_unit, axis=1, args=[dEmployee, dCoAAdler])
+    fGL['Narration'] = fGL['Narration'].fillna('')
     fGL['Amount'] = fGL['Credit Amount'] - fGL['Debit Amount']
     fGL.drop(columns=['Credit Amount', 'Debit Amount'], inplace=True)
     fGL.loc[:, 'Voucher Date'] = fGL['Voucher Date'] + pd.offsets.MonthEnd(0)
@@ -297,16 +297,17 @@ def coa_ordering(dCoAAdler: pd.DataFrame) -> list:
     value = coa_sort_order.pop('Direct Income')
     coa_sort_order['Total Revenue'] = value
 
-    sorted_data = dict(sorted(coa_sort_order.items(), key=lambda item: item[1]))
+    # sorted_data = dict(sorted(coa_sort_order.items(), key=lambda item: item[1]))
 
     for i in ['Due From Related Parties', 'Due To Related Parties', 'Total Equity & Liabilities']:
         if i == 'Due From Related Parties':
-            sorted_data['Due From Related Parties'] = sorted_data.get('Current Assets') - 0.01
+            coa_sort_order['Due From Related Parties'] = coa_sort_order.get('Current Assets') - 0.01
         elif i == 'Due To Related Parties':
-            sorted_data['Due To Related Parties'] = sorted_data.get('Current Liabilities') - 0.01
+            coa_sort_order['Due To Related Parties'] = coa_sort_order.get('Current Liabilities') - 0.01
         else:
-            sorted_data['Total Equity & Liabilities'] = sorted_data.get('Equity') + 0.01
+            coa_sort_order['Total Equity & Liabilities'] = coa_sort_order.get('Equity') + 0.01
 
+    sorted_data = dict(sorted(coa_sort_order.items(), key=lambda item: item[1]))
     return sorted_data
 
 
@@ -776,28 +777,40 @@ def balancesheet(data: pd.DataFrame, end_date: datetime) -> pd.DataFrame:
     return bs_data
 
 
-def bsratios(bsdata: pd.DataFrame, pldata: pd.DataFrame) -> dict:
-    bsdata.set_index(keys='Description', inplace=True)
-    for period in financial_periods_bs:
-        current_period: str = period.strftime('%Y-%m-%d')
-        prior_year: str = int(period.strftime('%Y')) - 1 if int(period.strftime('%Y')) != 2020 else int(
-            period.strftime('%Y'))
-        privious_period: str = f"{prior_year}-{period.strftime('%m')}-{period.strftime('%d')}"
-        # current_ratio https://corporatefinanceinstitute.com/resources/accounting/current-ratio-formula/  Liquidity ratio
-        current_ratio: float = bsdata.loc['Current Assets', current_period] / bsdata.loc[
-            'Current Liabilities', current_period]
-        # asset turnover ratio https://corporatefinanceinstitute.com/resources/accounting/asset-turnover-ratio/ efficiency
-        asset_turnover: float = pldata.loc['Total Revenue', current_period] / (
-                (bsdata.loc['Total Assets', current_period] + bsdata.loc['Total Assets', privious_period]) / 2)
-        # roe https://corporatefinanceinstitute.com/resources/accounting/what-is-return-on-equity-roe/ profitability
-        roe: float = pldata.loc['Net Profit', current_period] / ((bsdata.loc['Total Equity', current_period] +
-                                                                  bsdata.loc[
-                                                                      'Total Equity', privious_period]) / 2) * 100
-        ratiosbs: dict = {'cr': current_ratio, 'ato': asset_turnover, 'roe': roe}
-        return ratiosbs
+def bsratios(bsdata: pd.DataFrame, pldata: pd.DataFrame, periods: list, end_date: datetime) -> dict:
+    values: list = [np.nan] * len(bsdata.columns)
+    df_ratios_bs = pd.DataFrame(data={'period': bsdata.columns.tolist(), 'cr': values, 'ato': values, 'roe': values})
+    for period in periods:
+        if period != datetime(year=end_date.year - 1, month=end_date.month, day=end_date.day):
+            current_period: str = period.strftime('%Y-%m-%d')
+            prior_year: str = int(period.strftime('%Y')) - 1 if int(period.strftime('%Y')) != 2020 else int(
+                period.strftime('%Y'))
+            previous_period: str = f"{prior_year}-{period.strftime('%m')}-{period.strftime('%d')}"
+            # current_ratio https://corporatefinanceinstitute.com/resources/accounting/current-ratio-formula/  Liquidity ratio
+            current_ratio: float = bsdata.loc[bsdata['Description'] == 'Current Assets', current_period].iloc[0] / - \
+            bsdata.loc[bsdata['Description'] == 'Current Liabilities', current_period].iloc[0]
+            # asset turnover ratio https://corporatefinanceinstitute.com/resources/accounting/asset-turnover-ratio/ efficiency
+            asset_turnover: float = pldata.loc[pldata['Description'] == 'Total Revenue', current_period].iloc[0] / ((
+                                                                                                                                bsdata.loc[
+                                                                                                                                    bsdata[
+                                                                                                                                        'Description'] == 'Assets', current_period].iloc[
+                                                                                                                                    0] +
+                                                                                                                                bsdata.loc[
+                                                                                                                                    bsdata[
+                                                                                                                                        'Description'] == 'Assets', previous_period].iloc[
+                                                                                                                                    0]) / 2)
+            # roe https://corporatefinanceinstitute.com/resources/accounting/what-is-return-on-equity-roe/ profitability
+            roe: float = pldata.loc[pldata['Description'] == 'Net Profit', current_period].iloc[0] / ((-bsdata.loc[
+                bsdata['Description'] == 'Equity', current_period].iloc[0] + -bsdata.loc[
+                bsdata['Description'] == 'Equity', previous_period].iloc[0]) / 2) * 100
+            df_ratios_bs.loc[df_ratios_bs['period'] == current_period, 'cr'] = current_ratio
+            df_ratios_bs.loc[df_ratios_bs['period'] == current_period, 'ato'] = asset_turnover
+            df_ratios_bs.loc[df_ratios_bs['period'] == current_period, 'roe'] = roe
+    df_ratios_bs.dropna(inplace=True)
+    return df_ratios_bs
 
 
-def plratios(df_pl: pd.DataFrame,plcombined:pd.DataFrame) -> dict:
+def plratios(df_pl: pd.DataFrame, plcombined: pd.DataFrame) -> dict:
     plmeasures: dict = {
         'gp': {'cy_cp_basic': 0, 'cy_ytd_basic': 0, 'cy_pp_basic': 0, 'py_cp_basic': 0, 'py_ytd_basic': 0,
                'cy_cp_basic_bud': 0, 'cy_ytd_basic_bud': 0, 'cy_ytd_basic_monthwise': 0},
@@ -845,24 +858,25 @@ def plratios(df_pl: pd.DataFrame,plcombined:pd.DataFrame) -> dict:
                                    df.loc['Total Revenue', 'Amount'] * 100
                 plmeasures[measure][k] = ratio
 
-    plcombined.fillna(0,inplace=True)
-    plcombined.set_index('Description',inplace=True)
-    values :list = [np.nan] * len(plcombined.columns)
-    df_ratios = pd.DataFrame(data={'period':plcombined.columns.tolist(),'gp':values,'np':values,'ebitda':values,'revenue':values})
+    plcombined.fillna(0, inplace=True)
+    plcombined.set_index('Description', inplace=True)
+    values: list = [np.nan] * len(plcombined.columns)
+    df_ratios = pd.DataFrame(
+        data={'period': plcombined.columns.tolist(), 'gp': values, 'np': values, 'ebitda': values, 'revenue': values})
 
     for period in df_ratios['period']:
-        revenue :float = plcombined.loc['Total Revenue',period]
-        gp:float = plcombined.loc['Gross Profit',period]
-        netp:float = plcombined.loc['Net Profit',period]
-        interest:float = plcombined.loc['Interest Expenses',period]
-        dep:float = plcombined.loc['Depreciation',period]
-        depro:float = plcombined.loc['Depreciation - Projects',period]
-        ebitda:float = netp + dep + depro + interest
-        df_ratios.loc[df_ratios['period']==period,'gp'] = gp
-        df_ratios.loc[df_ratios['period']==period,'np'] = netp
-        df_ratios.loc[df_ratios['period']==period,'ebitda'] = ebitda
-        df_ratios.loc[df_ratios['period']==period,'revenue'] = revenue
-        plmeasures['plyearly'] =df_ratios
+        revenue: float = plcombined.loc['Total Revenue', period]
+        gp: float = plcombined.loc['Gross Profit', period]
+        netp: float = plcombined.loc['Net Profit', period]
+        interest: float = plcombined.loc['Interest Expenses', period]
+        dep: float = plcombined.loc['Depreciation', period]
+        depro: float = plcombined.loc['Depreciation - Projects', period]
+        ebitda: float = netp + dep + depro + interest
+        df_ratios.loc[df_ratios['period'] == period, 'gp'] = gp
+        df_ratios.loc[df_ratios['period'] == period, 'np'] = netp
+        df_ratios.loc[df_ratios['period'] == period, 'ebitda'] = ebitda
+        df_ratios.loc[df_ratios['period'] == period, 'revenue'] = revenue
+        plmeasures['plyearly'] = df_ratios
     return plmeasures
 
 
@@ -1435,6 +1449,40 @@ def page_separator(head: str, document):
     document.add_page_break()
 
 
+def narration_refine(row):
+    sample_text = row['Narration']
+    start_index = sample_text.find('|')
+    end_index = sample_text.find('|', start_index + 1)
+    return sample_text[start_index + 1:end_index].title()
+
+
+def abnormal_trn(fGL: pd.DataFrame, end_date: datetime, dCoAAdler: pd.DataFrame):
+    start_date: datetime = datetime(year=end_date.year, month=end_date.month, day=1)
+    fGL = fGL.loc[fGL['Narration'].str.contains(r'\|[^|]+\|', regex=True) & (fGL['Voucher Date'] >= start_date) & (
+            fGL['Voucher Date'] <= end_date) & (fGL['Ledger_Code'] >= 5000000000), ['Voucher Date', 'Narration',
+                                                                                    'Ledger_Code', 'Amount',
+                                                                                    'Voucher Number']]
+    fGL['Narration'] = fGL.apply(narration_refine, axis=1)
+    fGL['Amount'] = fGL['Amount'] * -1
+    fGL = fGL.groupby(by=['Narration', 'Ledger_Code', 'Voucher Number'], as_index=False)['Amount'].sum()
+    fGL.sort_values(by='Ledger_Code', inplace=True)
+    fGL = pd.merge(left=fGL, right=dCoAAdler[['Ledger_Name']], on='Ledger_Code', how='left').drop(
+        columns=['Ledger_Code', 'Voucher Number']).rename(
+        columns={'Narration': 'Description', 'Ledger_Name': 'Account'})
+    return fGL
+
+
+def cell_background(table, row: int, column: list, original: float, compare: float, good: str, bad: str):
+    result = good if original >= compare else bad
+    for idx, cell in enumerate(table.rows[row].cells):
+        if idx in column:
+            cell_xml_element = cell._tc
+            table_cell_properties = cell_xml_element.get_or_add_tcPr()
+            shade_obj = OxmlElement('w:shd')
+            shade_obj.set(qn('w:fill'), result)
+            table_cell_properties.append(shade_obj)
+
+
 company_id = 0
 end_date: datetime = datetime(year=2024, month=7, day=31)
 start_date: datetime = datetime(year=end_date.year - 1, month=1, day=1)
@@ -1491,7 +1539,7 @@ py_cp_basic: pd.DataFrame = df_pl['df_basic']['py_cp_basic']
 py_ytd_basic: pd.DataFrame = df_pl['df_basic']['py_ytd_basic']
 cy_cp_basic_bud: pd.DataFrame = df_pl['df_basic']['cy_cp_basic_bud']
 cy_ytd_basic_bud: pd.DataFrame = df_pl['df_basic']['cy_ytd_basic_bud']
-ratios_pandl: dict = plratios(df_pl=df_pl,plcombined=plcombined)
+ratios_pandl: dict = plratios(df_pl=df_pl, plcombined=plcombined)
 
 sort_order: list = coa_ordering(dCoAAdler=dCoAAdler)
 
@@ -1571,6 +1619,27 @@ for _, row in cp_month_full.iterrows():
     cells[3].text = number_format(row.iloc[3])
     cells[4].text = number_format(row.iloc[4])
 table_formatter(table_name=tbl_month_full, style_name='table_style_1', special=plheads)
+
+abnormal_trn_title = document.add_paragraph().add_run('Explanations for Major Changes')
+apply_style_properties(abnormal_trn_title, style_picker(name='report_title'))
+
+abnormal_df: pd.DataFrame = abnormal_trn(fGL=fGL, end_date=end_date, dCoAAdler=dCoAAdler)
+
+abnormal_tbl = document.add_table(rows=1, cols=3)
+abnormal_tbl.columns[0].width = Cm(11)
+heading_cells = abnormal_tbl.rows[0].cells
+heading_cells[0].text = 'Description'
+heading_cells[1].text = 'Account'
+heading_cells[2].text = 'Amount'
+
+for _, row in abnormal_df.iterrows():
+    cells = abnormal_tbl.add_row().cells
+    cells[0].text = str(row['Description'])
+    cells[1].text = str(row['Account'])
+    cells[2].text = number_format(row.iloc[1])
+
+table_formatter(table_name=abnormal_tbl, style_name='table_style_1', special=[])
+
 document.add_page_break()
 
 cy_ytd_basic: pd.DataFrame = df_pl['df_basic']['cy_ytd_basic']
@@ -1608,33 +1677,36 @@ table_formatter(table_name=tbl_ytd_basic, style_name='table_style_1', special=pl
 document.add_page_break()
 
 plt.style.use('ggplot')
-fig_pl, (ax1,ax2) = plt.subplots(nrows=2, ncols=1)
+fig_pl, (ax1, ax2) = plt.subplots(nrows=2, ncols=1)
 
 ratiopl: pd.DataFrame = ratios_pandl['gp']['cy_ytd_basic_monthwise']
 ax1.set_title(f'GP Vs NP VS EBITDA - {end_date.year}')
-ax1.plot([i.strftime('%b') for i in ratiopl['Voucher Date']], (ratiopl['Gross Profit'] / ratiopl['Total Revenue'] * 100),
-        label='GP')
+ax1.plot([i.strftime('%b') for i in ratiopl['Voucher Date']],
+         (ratiopl['Gross Profit'] / ratiopl['Total Revenue'] * 100),
+         label='GP')
 ax1.plot([i.strftime('%b') for i in ratiopl['Voucher Date']], (ratiopl['EBITDA'] / ratiopl['Total Revenue'] * 100),
-        label='EBITDA')
+         label='EBITDA')
 ax1.plot([i.strftime('%b') for i in ratiopl['Voucher Date']], (ratiopl['Net Profit'] / ratiopl['Total Revenue'] * 100),
-        label='NP')
+         label='NP')
 
 ax1.set_yticklabels(['{:,.0f}%'.format(i) for i in ax1.get_yticks()])
 ax1.legend()
 
 ratioplyearly: pd.DataFrame = ratios_pandl['plyearly']
 ax2.set_title(f'GP Vs NP VS EBITDA ({sys_cut_off.year}-{end_date.year})')
-ax2.plot([datetime.strptime(i,'%Y-%m-%d').strftime('%Y') for i in ratioplyearly['period']], (ratioplyearly['gp'] / ratioplyearly['revenue'] * 100),
-        label='GP')
-ax2.plot([datetime.strptime(i,'%Y-%m-%d').strftime('%Y') for i in ratioplyearly['period']], (ratioplyearly['ebitda'] / ratioplyearly['revenue'] * 100),
-        label='EBITDA')
-ax2.plot([datetime.strptime(i,'%Y-%m-%d').strftime('%Y') for i in ratioplyearly['period']], (ratioplyearly['np'] / ratioplyearly['revenue'] * 100),
-        label='NP')
+ax2.plot([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in ratioplyearly['period']],
+         (ratioplyearly['gp'] / ratioplyearly['revenue'] * 100),
+         label='GP')
+ax2.plot([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in ratioplyearly['period']],
+         (ratioplyearly['ebitda'] / ratioplyearly['revenue'] * 100),
+         label='EBITDA')
+ax2.plot([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in ratioplyearly['period']],
+         (ratioplyearly['np'] / ratioplyearly['revenue'] * 100),
+         label='NP')
 
 ax2.invert_xaxis()
 ax2.set_yticklabels(['{:,.0f}%'.format(i) for i in ax2.get_yticks()])
 ax2.legend()
-
 
 pl_graph_buf = BytesIO()
 plt.tight_layout(h_pad=3)
@@ -1780,7 +1852,7 @@ document.add_page_break()
 change_orientation(doc=document, method='l')
 cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Services W.L.L')
 apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
-cy_mw_bs_report_title = document.add_paragraph().add_run('Balance sheet month wise')
+cy_mw_bs_report_title = document.add_paragraph().add_run('Statement of Financial Position (Balance Sheet)')
 apply_style_properties(cy_mw_bs_report_title, style_picker(name='report_title'))
 bscombined['Description'] = pd.Categorical(bscombined['Description'],
                                            categories=[k for k in sort_order.keys()],
@@ -1828,18 +1900,17 @@ heading_cells[1].text = 'Amount'
 for _, row in rpr_df.iterrows():
     cells = tbl_rpr.add_row().cells
     cells[0].text = str(row['Description'])
-    cells[1].text = number_format(row.iloc[1])
+    cells[1].text = number_format(-row.iloc[1])
 
-table_formatter(table_name=tbl_rpr, style_name='table_style_1', special=[])
+table_formatter(table_name=tbl_rpr, style_name='table_style_1', special=['Total'])
 
-
-rpp_df: float = interco.get('rpp_df')
+rpp_df: pd.DataFrame = interco.get('rpp_df')
 rpp_total_row: pd.DataFrame = pd.DataFrame(data={'Amount': [rpp_df['Amount'].sum()], 'Description': 'Total'}, index=[
     '9999'])
 rpp_df = pd.concat([rpp_df, rpp_total_row], ignore_index=False)
 
 rpp_report_title = document.add_paragraph().add_run('\n\nBreak-up of Related-Party Payables')
-apply_style_properties(rpr_report_title, style_picker(name='report_title'))
+apply_style_properties(rpp_report_title, style_picker(name='report_title'))
 tbl_rpp = document.add_table(rows=1, cols=2)
 heading_cells = tbl_rpp.rows[0].cells
 heading_cells[0].text = 'Description'
@@ -1850,8 +1921,35 @@ for _, row in rpp_df.iterrows():
     cells[0].text = str(row['Description'])
     cells[1].text = number_format(row.iloc[1])
 
-table_formatter(table_name=tbl_rpp, style_name='table_style_1', special=[])
+table_formatter(table_name=tbl_rpp, style_name='table_style_1', special=['Total'])
 
+document.add_page_break()
+
+plt.style.use('ggplot')
+fig_bs, (ax1, ax2, ax3) = plt.subplots(nrows=3, ncols=1, sharex=True)
+
+bs_ratios_df: pd.DataFrame = bsratios(bsdata=bscombined, pldata=plcombined, periods=financial_periods_bs,
+                                      end_date=end_date)
+
+ax1.set_title('Current Ratio')
+ax1.plot([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in bs_ratios_df['period']], bs_ratios_df['cr'])
+ax1.set_yticklabels(['{:,}'.format(int(i)) for i in ax1.get_yticks()])
+
+ax2.set_title('Assets Turnover Ratio')
+ax2.plot([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in bs_ratios_df['period']], bs_ratios_df['ato'])
+ax2.set_yticklabels(['{:,}'.format(int(i)) for i in ax2.get_yticks()])
+
+ax3.set_title('Return on Equity')
+ax3.plot([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in bs_ratios_df['period']], bs_ratios_df['roe'])
+ax3.set_yticklabels(['{:,.0f}%'.format(i) for i in ax3.get_yticks()])
+ax3.invert_xaxis()
+
+bs_graph_buf = BytesIO()
+plt.tight_layout(h_pad=3)
+plt.savefig(bs_graph_buf, format='png')
+plt.close(fig_bs)
+bs_graph_buf.seek(0)
+doc.add_picture(bs_graph_buf)
 document.add_page_break()
 
 page_separator(head='Sales', document=document)
@@ -2074,11 +2172,18 @@ for customer in customer_list:
     tbl_cust_rev_th_1.cells[
         3].text = f'CY PP Revenue\n({(end_date.replace(day=1) - timedelta(days=1)).strftime("%B")} Month)'
     tbl_cust_rev_td_1 = tbl_cust_rev_1.rows[1]
-    tbl_cust_rev_td_1.cells[0].text = number_format(num=customer_info[customer]['cy_cp_rev'])
-    tbl_cust_rev_td_1.cells[1].text = number_format(num=customer_info[customer]['cy_ytd_rev'])
+    arrow_type_cy: str = '↑' if customer_info[customer]['cy_cp_rev'] >= customer_info[customer]['py_cp_rev'] else '↓'
+    arrow_type_ytd: str = '↑' if customer_info[customer]['cy_ytd_rev'] >= customer_info[customer]['py_ytd_rev'] else '↓'
+    tbl_cust_rev_td_1.cells[0].text = f"{number_format(num=customer_info[customer]['cy_cp_rev'])} {arrow_type_cy}"
+    tbl_cust_rev_td_1.cells[1].text = f"{number_format(num=customer_info[customer]['cy_ytd_rev'])} {arrow_type_ytd}"
     tbl_cust_rev_td_1.cells[2].text = str(customer_info[customer]['cy_cp_rev_contrib_pct'])
     tbl_cust_rev_td_1.cells[3].text = number_format(num=customer_info[customer]['cy_pp_rev'])
     table_formatter(table_name=tbl_cust_rev_1, style_name='table_style_1', special=[])
+
+    cell_background(table=tbl_cust_rev_1, row=1, column=[0], original=customer_info[customer]['cy_cp_rev'],
+                    compare=customer_info[customer]['py_cp_rev'], good='d2f3cf', bad='ffd8d5')
+    cell_background(table=tbl_cust_rev_1, row=1, column=[1], original=customer_info[customer]['cy_ytd_rev'],
+                    compare=customer_info[customer]['py_ytd_rev'], good='d2f3cf', bad='ffd8d5')
 
     tbl_cust_rev_2 = document.add_table(rows=2, cols=4)
     tbl_cust_rev_th_2 = tbl_cust_rev_2.rows[0]
@@ -2146,6 +2251,7 @@ for customer in customer_list:
                   colLabels=monthly_rev.columns, cellLoc='center', loc='center')
     rev_tbl.axis('off')
     rev_bar.bar([i.strftime('%b') for i in monthly_rev['Month']], monthly_rev['Amount'])
+    rev_bar.set_yticklabels(['{:,}'.format(int(i)) for i in rev_bar.get_yticks()])
 
     buf = BytesIO()
     plt.tight_layout()
@@ -2522,5 +2628,4 @@ doc.save('Monthly FS.docx')
 convert('Monthly FS.docx')
 os.unlink('Monthly FS.docx')
 
-# TODO bsratios() should be shown
 # TODO COHART to show
