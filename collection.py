@@ -150,7 +150,7 @@ def already_collected(row) -> float:
 
 
 receipts: pd.DataFrame = receipts_recorded(df_gl=df_gl, df_collection=df_collection)
-
+receipts.to_csv('collection_report_receipts.csv')
 already_collected_receipts: pd.DataFrame = receipts
 
 # filters the collection date based on the selection
