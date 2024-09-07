@@ -12,7 +12,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx2pdf import convert
 from io import BytesIO
-from data import company_data, company_info, doc_styles, table_style
+from data import company_data, company_info, doc_styles, table_style, cogs_ledger_map
 import statistics
 import numpy as np
 from itertools import islice
@@ -231,7 +231,10 @@ def preprocessing(data: dict) -> dict:
     fBudget.loc[fBudget['Fourth_Level_Group_Name'] == 'Expenses', 'Amount'] *= -1
     fCollection = receipts_recorded(data=fCollection)
     fOT['date'] = fOT['date'].str.split(' ', expand=True)[4].str.strip()
-    fOT['date'] = pd.to_datetime(fOT['date'], format='%b-%Y')
+    fOT['date'] = pd.to_datetime(fOT['date'], format='%b-%Y') + pd.offsets.MonthEnd(0)
+    fOT.fillna(0, inplace=True)
+    fOT = fOT.loc[fOT['net'] != 0]
+    fOT.loc[:, 'net'] = fOT['net'] * -1
     fTimesheet = fTimesheet.loc[~fTimesheet['job_id'].isin(['discharged', 'not_joined'])]
     fTimesheet.loc[:, 'v_date'] = fTimesheet['v_date'] + pd.offsets.MonthEnd(0)
     return {'fGL': fGL, 'dEmployee': dEmployee, 'dCoAAdler': dCoAAdler, 'fInvoices': fInvoices, 'fBudget': fBudget,
@@ -788,17 +791,17 @@ def bsratios(bsdata: pd.DataFrame, pldata: pd.DataFrame, periods: list, end_date
             previous_period: str = f"{prior_year}-{period.strftime('%m')}-{period.strftime('%d')}"
             # current_ratio https://corporatefinanceinstitute.com/resources/accounting/current-ratio-formula/  Liquidity ratio
             current_ratio: float = bsdata.loc[bsdata['Description'] == 'Current Assets', current_period].iloc[0] / - \
-            bsdata.loc[bsdata['Description'] == 'Current Liabilities', current_period].iloc[0]
+                bsdata.loc[bsdata['Description'] == 'Current Liabilities', current_period].iloc[0]
             # asset turnover ratio https://corporatefinanceinstitute.com/resources/accounting/asset-turnover-ratio/ efficiency
             asset_turnover: float = pldata.loc[pldata['Description'] == 'Total Revenue', current_period].iloc[0] / ((
-                                                                                                                                bsdata.loc[
-                                                                                                                                    bsdata[
-                                                                                                                                        'Description'] == 'Assets', current_period].iloc[
-                                                                                                                                    0] +
-                                                                                                                                bsdata.loc[
-                                                                                                                                    bsdata[
-                                                                                                                                        'Description'] == 'Assets', previous_period].iloc[
-                                                                                                                                    0]) / 2)
+                                                                                                                            bsdata.loc[
+                                                                                                                                bsdata[
+                                                                                                                                    'Description'] == 'Assets', current_period].iloc[
+                                                                                                                                0] +
+                                                                                                                            bsdata.loc[
+                                                                                                                                bsdata[
+                                                                                                                                    'Description'] == 'Assets', previous_period].iloc[
+                                                                                                                                0]) / 2)
             # roe https://corporatefinanceinstitute.com/resources/accounting/what-is-return-on-equity-roe/ profitability
             roe: float = pldata.loc[pldata['Description'] == 'Net Profit', current_period].iloc[0] / ((-bsdata.loc[
                 bsdata['Description'] == 'Equity', current_period].iloc[0] + -bsdata.loc[
@@ -1483,6 +1486,88 @@ def cell_background(table, row: int, column: list, original: float, compare: flo
             table_cell_properties.append(shade_obj)
 
 
+def job_profitability(fTimesheet: pd.DataFrame, fGL: pd.DataFrame, end_date: datetime, dEmployee: pd.DataFrame,
+                      dExclude: pd.DataFrame, fOT: pd.DataFrame, fInvoices: pd.DataFrame,
+                      cogs_map: dict, dJobs: pd.DataFrame) -> pd.DataFrame:
+    start_date: datetime = datetime(year=end_date.year, month=1, day=1)
+    periods: list = pd.date_range(start=start_date, end=end_date, freq='ME').to_pydatetime().tolist()
+    fGL = fGL.loc[:,
+          ['Cost Center', 'Voucher Date', 'Ledger_Code', 'Amount', 'Third_Level_Group_Name', 'Second_Level_Group_Name']]
+    fGL = fGL.loc[~fGL['Ledger_Code'].isin([5010101002, 5010101003])]
+    emp_list: list = dEmployee.index.tolist()
+    timesheet_sum: dict = {'dc_emp_beni': None, 'dc_trpt': None, 'dc_out': None, 'dc_sal': None}
+    timesheet_jobs: dict = {'dc_emp_beni': None, 'dc_trpt': None, 'dc_out': None, 'dc_sal': None}
+    periodic_allocation: dict = {}
+
+    for period in periods:
+        st_date: datetime = period + relativedelta(day=1)
+        fGL_fitlered: pd.DataFrame = fGL.loc[(fGL['Voucher Date'] >= st_date) & (fGL['Voucher Date'] <= period) &
+                                             (fGL['Second_Level_Group_Name'] == 'Manpower Cost'), ['Cost Center',
+                                                                                                   'Voucher Date',
+                                                                                                   'Ledger_Code',
+                                                                                                   'Amount']]
+        fGL_emp: pd.DataFrame = fGL_fitlered.loc[fGL_fitlered['Cost Center'].isin(emp_list)]
+        fGL_emp = fGL_emp.groupby(by=['Cost Center', 'Voucher Date', 'Ledger_Code'], as_index=False)['Amount'].sum()
+        fGL_emp = fGL_emp.loc[fGL_emp['Amount'] != 0]
+        fTimesheet_filtered = fTimesheet.loc[(fTimesheet['v_date'] >= st_date) & (fTimesheet['v_date'] <= period)]
+        fTimesheet_filtered = fTimesheet_filtered.groupby(['cost_center', 'job_id', 'v_date']).size().reset_index(
+            name='count')
+        billable_jobs: list = fTimesheet_filtered.loc[
+            fTimesheet_filtered['job_id'].str.contains('ESS/CTR'), 'job_id'].unique().tolist()
+
+        for c in dExclude.columns:
+            if c != 'job_type':
+                valid_jobs = dExclude.loc[dExclude[c] == False]['job_type'].tolist() + billable_jobs
+                timesheet_sum[c] = fTimesheet_filtered.loc[fTimesheet_filtered['job_id'].isin(valid_jobs)].groupby(
+                    ['cost_center', 'v_date'], as_index=False)['count'].sum()
+                timesheet_jobs[c] = fTimesheet_filtered.loc[fTimesheet_filtered['job_id'].isin(valid_jobs)]
+        allocation_dict: dict = {}
+        unallocated_amount: float = 0
+        for _, i in fGL_emp.iterrows():
+            df_type: str = [(k, v) for k, v in cogs_map.items() if i['Ledger_Code'] in v][0][0]
+            df_sum: pd.DataFrame = timesheet_sum[df_type]
+            timesheet_detailed: pd.DataFrame = timesheet_jobs[df_type]
+            try:
+                total_days: int = df_sum.loc[(df_sum['v_date'] == i['Voucher Date']) & (
+                        df_sum['cost_center'] == i['Cost Center']), 'count'].iloc[0]
+                timesheet_detailed = timesheet_detailed.loc[(timesheet_detailed['v_date'] == i['Voucher Date']) & (
+                        timesheet_detailed['cost_center'] == i['Cost Center']), ['job_id', 'count']]
+                allocation_dict_init = {}
+                for _, j in timesheet_detailed.iterrows():
+                    allocated: float = i['Amount'] / total_days * j['count']
+                    allocation_dict_init[j['job_id']] = allocated
+                allocation_dict = {k: allocation_dict_init.get(k, 0) + allocation_dict.get(k, 0) for k in
+                                   set(allocation_dict) | set(allocation_dict_init)}
+            except IndexError:
+                unallocated_amount += i['Amount']
+                allocation_dict['Un-Allocated'] = unallocated_amount
+        fOT_filtered: pd.DataFrame = fOT.loc[(fOT['date'] >= st_date) & (fOT['date'] <= period)]
+        fOT_filtered: dict = fOT_filtered.groupby(by='job_id')['net'].sum().to_dict()
+        allocation_dict = {k: allocation_dict.get(k, 0) + fOT.get(k, 0) for k in
+                           set(allocation_dict) | set(fOT_filtered)}
+        inv_filtered_cust: dict = fInvoices.loc[
+            (fInvoices['Invoice_Date'] >= st_date) & (fInvoices['Invoice_Date'] <= period), ['Order_ID',
+                                                                                             'Net_Amount']].groupby(
+            'Order_ID')['Net_Amount'].sum().to_dict()
+        allocation_dict = {k: allocation_dict.get(k, 0) + inv_filtered_cust.get(k, 0) for k in
+                           set(allocation_dict) | set(inv_filtered_cust)}
+        periodic_allocation[period] = allocation_dict
+    cy_cp: pd.DataFrame = pd.DataFrame(list(periodic_allocation[end_date].items()), columns=['Order_ID', 'Amount'])
+    cy_cp = pd.merge(left=cy_cp, right=dJobs[['Order_ID', 'Customer_Code', 'Employee_Code']], on='Order_ID', how='left')
+    cy_cp_cus: pd.DataFrame = cy_cp.groupby(by='Customer_Code', as_index=False)['Amount'].sum()
+    cy_cp_emp: pd.DataFrame = cy_cp.groupby(by='Employee_Code', as_index=False)['Amount'].sum()
+    cy_ytd: pd.DataFrame = pd.DataFrame()
+    for period in periods:
+        month_df: pd.DataFrame = pd.DataFrame(list(periodic_allocation[period].items()), columns=['Order_ID', 'Amount'])
+        cy_ytd = pd.concat([month_df, cy_ytd])
+    cy_ytd = pd.merge(left=cy_ytd, right=dJobs[['Order_ID', 'Customer_Code', 'Employee_Code']], on='Order_ID',
+                      how='left')
+    cy_ytd_cus: pd.DataFrame = cy_ytd.groupby(by='Customer_Code', as_index=False)['Amount'].sum()
+    cy_ytd_emp: pd.DataFrame = cy_ytd.groupby(by='Employee_Code', as_index=False)['Amount'].sum()
+    return {'periodic_allocation': periodic_allocation, 'cy_cp_cus': cy_cp_cus, 'cy_ytd_cus': cy_ytd_cus,
+            'cy_cp_emp': cy_cp_emp, 'cy_ytd_emp': cy_ytd_emp}
+
+
 company_id = 0
 end_date: datetime = datetime(year=2024, month=7, day=31)
 start_date: datetime = datetime(year=end_date.year - 1, month=1, day=1)
@@ -1504,6 +1589,14 @@ dJobs: pd.DataFrame = cleaned_data['dJobs']
 fTimesheet: pd.DataFrame = cleaned_data['fTimesheet']
 fOT: pd.DataFrame = cleaned_data['fOT']
 dExclude: pd.DataFrame = cleaned_data['dExclude']
+
+profitability: dict = job_profitability(fTimesheet=fTimesheet, fGL=merged, end_date=end_date, dEmployee=dEmployee,
+                                        dExclude=dExclude, fOT=fOT, fInvoices=fInvoices, cogs_map=cogs_ledger_map,
+                                        dJobs=dJobs)
+cy_cp_profit_cus: pd.DataFrame = profitability['cy_cp_cus']
+cy_ytd_profit_cus: pd.DataFrame = profitability['cy_ytd_cus']
+cy_cp_profit_emp: pd.DataFrame = profitability['cy_cp_emp']
+cy_ytd_profit_emp: pd.DataFrame = profitability['cy_ytd_emp']
 
 financial_periods_bs: list = sorted(list(
     set([end_date, datetime(year=end_date.year - 1, month=end_date.month, day=end_date.day)] + list(
@@ -1933,11 +2026,11 @@ bs_ratios_df: pd.DataFrame = bsratios(bsdata=bscombined, pldata=plcombined, peri
 
 ax1.set_title('Current Ratio')
 ax1.plot([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in bs_ratios_df['period']], bs_ratios_df['cr'])
-ax1.set_yticklabels(['{:,}'.format(int(i)) for i in ax1.get_yticks()])
+ax1.set_yticklabels(['{:,.2f}'.format(i) for i in ax1.get_yticks()])
 
 ax2.set_title('Assets Turnover Ratio')
 ax2.plot([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in bs_ratios_df['period']], bs_ratios_df['ato'])
-ax2.set_yticklabels(['{:,}'.format(int(i)) for i in ax2.get_yticks()])
+ax2.set_yticklabels(['{:,.2f}'.format(i) for i in ax2.get_yticks()])
 
 ax3.set_title('Return on Equity')
 ax3.plot([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in bs_ratios_df['period']], bs_ratios_df['roe'])
@@ -2148,6 +2241,7 @@ table_formatter(table_name=tbl_cust_toc, style_name='table_style_1', special=[])
 document.add_page_break()
 
 for customer in customer_list:
+    cus_code: list = dCustomers.loc[(dCustomers['Cus_Name'] == customer), 'Customer_Code'].tolist()
     cy_cp_pl_company_title = document.add_paragraph().add_run(customer.upper())
     apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
     tbl_cust_main = document.add_table(rows=2, cols=4)
@@ -2220,8 +2314,10 @@ for customer in customer_list:
     tbl_cust_gp_th.cells[2].text = 'ROI Month'
     tbl_cust_gp_th.cells[3].text = 'ROI YTD'
     tbl_cust_gp_td = tbl_cust_gp.rows[1]
-    tbl_cust_gp_td.cells[0].text = number_format(num=customer_info[customer]['customer_gp_cp'])
-    tbl_cust_gp_td.cells[1].text = number_format(num=customer_info[customer]['customer_gp_ytd'])
+    tbl_cust_gp_td.cells[0].text = number_format(
+        num=cy_cp_profit_cus.loc[cy_cp_profit_cus['Customer_Code'].isin(cus_code), 'Amount'].sum())
+    tbl_cust_gp_td.cells[1].text = number_format(
+        num=cy_ytd_profit_cus.loc[cy_ytd_profit_cus['Customer_Code'].isin(cus_code), 'Amount'].sum())
     tbl_cust_gp_td.cells[2].text = str(customer_info[customer]['cy_cp_roi'])
     tbl_cust_gp_td.cells[3].text = str(customer_info[customer]['cy_ytd_roi'])
     table_formatter(table_name=tbl_cust_gp, style_name='table_style_1', special=[])
@@ -2335,9 +2431,12 @@ for salesperson in salesperson_list:
     tbl_salesman_gp_th_1.cells[0].text = 'CY CP GP'
     tbl_salesman_gp_th_1.cells[1].text = 'CY YTD GP'
 
+    cy_cp_gp: float = cy_cp_profit_emp.loc[cy_cp_profit_emp['Employee_Code'] == salesperson, 'Amount'].sum()
+    cy_ytd_gp: float = cy_ytd_profit_emp.loc[cy_ytd_profit_emp['Employee_Code'] == salesperson, 'Amount'].sum()
+
     tbl_salesman_gp_td_1 = tbl_salesman_gp_1.rows[1]
-    tbl_salesman_gp_td_1.cells[0].text = number_format(num=salesperson_stats[salesperson]['cy_cp_gp'])
-    tbl_salesman_gp_td_1.cells[1].text = number_format(num=salesperson_stats[salesperson]['cy_ytd_gp'])
+    tbl_salesman_gp_td_1.cells[0].text = number_format(num=cy_cp_gp)
+    tbl_salesman_gp_td_1.cells[1].text = number_format(num=cy_ytd_gp)
     table_formatter(table_name=tbl_salesman_gp_1, style_name='table_style_1', special=[])
 
     tbl_salesman_gp_2 = document.add_table(rows=2, cols=2)
