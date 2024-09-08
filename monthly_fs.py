@@ -1486,87 +1486,93 @@ def cell_background(table, row: int, column: list, original: float, compare: flo
             table_cell_properties.append(shade_obj)
 
 
-def job_profitability(fTimesheet: pd.DataFrame, fGL: pd.DataFrame, end_date: datetime, dEmployee: pd.DataFrame,
-                      dExclude: pd.DataFrame, fOT: pd.DataFrame, fInvoices: pd.DataFrame,
-                      cogs_map: dict, dJobs: pd.DataFrame) -> pd.DataFrame:
-    start_date: datetime = datetime(year=end_date.year, month=1, day=1)
-    periods: list = pd.date_range(start=start_date, end=end_date, freq='ME').to_pydatetime().tolist()
-    fGL = fGL.loc[:,
-          ['Cost Center', 'Voucher Date', 'Ledger_Code', 'Amount', 'Third_Level_Group_Name', 'Second_Level_Group_Name']]
-    fGL = fGL.loc[~fGL['Ledger_Code'].isin([5010101002, 5010101003])]
-    emp_list: list = dEmployee.index.tolist()
-    timesheet_sum: dict = {'dc_emp_beni': None, 'dc_trpt': None, 'dc_out': None, 'dc_sal': None}
-    timesheet_jobs: dict = {'dc_emp_beni': None, 'dc_trpt': None, 'dc_out': None, 'dc_sal': None}
-    periodic_allocation: dict = {}
+def job_profitability(fTimesheet:pd.DataFrame,fGL:pd.DataFrame,end_date:datetime,dEmployee:pd.DataFrame,dExclude:pd.DataFrame,fOT:pd.DataFrame,fInvoices:pd.DataFrame,cogs_map:dict,dJobs:pd.DataFrame)->pd.DataFrame:
+
+    start_date:datetime = datetime(year=end_date.year,month=1,day=1)
+    periods :list =  pd.date_range(start=start_date, end=end_date, freq='ME').to_pydatetime().tolist()
+    fGL = fGL.loc[:,['Cost Center','Voucher Date','Ledger_Code','Amount','Third_Level_Group_Name','Second_Level_Group_Name']]
+    fGL = fGL.loc[~fGL['Ledger_Code'].isin([5010101002,5010101003])]
+    emp_list :list = dEmployee.index.tolist()
+    timesheet_sum :dict = {'dc_emp_beni':None,'dc_trpt':None,'dc_out':None,'dc_sal':None}
+    timesheet_jobs :dict = {'dc_emp_beni':None,'dc_trpt':None,'dc_out':None,'dc_sal':None}
+    timesheet_grand_sum :dict = {'dc_emp_beni':None,'dc_trpt':None,'dc_out':None,'dc_sal':None}
+    periodic_allocation :dict = {}
 
     for period in periods:
-        st_date: datetime = period + relativedelta(day=1)
-        fGL_fitlered: pd.DataFrame = fGL.loc[(fGL['Voucher Date'] >= st_date) & (fGL['Voucher Date'] <= period) &
-                                             (fGL['Second_Level_Group_Name'] == 'Manpower Cost'), ['Cost Center',
-                                                                                                   'Voucher Date',
-                                                                                                   'Ledger_Code',
-                                                                                                   'Amount']]
-        fGL_emp: pd.DataFrame = fGL_fitlered.loc[fGL_fitlered['Cost Center'].isin(emp_list)]
-        fGL_emp = fGL_emp.groupby(by=['Cost Center', 'Voucher Date', 'Ledger_Code'], as_index=False)['Amount'].sum()
-        fGL_emp = fGL_emp.loc[fGL_emp['Amount'] != 0]
-        fTimesheet_filtered = fTimesheet.loc[(fTimesheet['v_date'] >= st_date) & (fTimesheet['v_date'] <= period)]
-        fTimesheet_filtered = fTimesheet_filtered.groupby(['cost_center', 'job_id', 'v_date']).size().reset_index(
-            name='count')
-        billable_jobs: list = fTimesheet_filtered.loc[
-            fTimesheet_filtered['job_id'].str.contains('ESS/CTR'), 'job_id'].unique().tolist()
-
+        st_date :datetime = period + relativedelta(day=1)
+        fGL_fitlered :pd.DataFrame = fGL.loc[(fGL['Voucher Date']>=st_date) & (fGL['Voucher Date']<=period) & 
+                    (fGL['Second_Level_Group_Name'] == 'Manpower Cost') ,['Cost Center','Voucher Date','Ledger_Code','Amount']]
+        fGL_emp :pd.DataFrame = fGL_fitlered.loc[fGL_fitlered['Cost Center'].isin(emp_list)]
+        fGL_other :pd.DataFrame = fGL_fitlered.loc[~fGL_fitlered['Cost Center'].isin(emp_list),['Amount','Ledger_Code']]
+        fGL_emp = fGL_emp.groupby(by=['Cost Center','Voucher Date','Ledger_Code'],as_index=False)['Amount'].sum()
+        fGL_emp = fGL_emp.loc[fGL_emp['Amount']!=0]
+        fTimesheet_filtered :pd.DataFrame = fTimesheet.loc[(fTimesheet['v_date'] >= st_date) & (fTimesheet['v_date']<=period)]
+        fTimesheet_filtered = fTimesheet_filtered.groupby(['cost_center', 'job_id', 'v_date']).size().reset_index(name='count')
+        billable_jobs:list = fTimesheet_filtered.loc[fTimesheet_filtered['job_id'].str.contains('ESS/CTR'),'job_id'].unique().tolist()
+        
         for c in dExclude.columns:
-            if c != 'job_type':
-                valid_jobs = dExclude.loc[dExclude[c] == False]['job_type'].tolist() + billable_jobs
-                timesheet_sum[c] = fTimesheet_filtered.loc[fTimesheet_filtered['job_id'].isin(valid_jobs)].groupby(
-                    ['cost_center', 'v_date'], as_index=False)['count'].sum()
+            if c not in  ['job_type','group']:
+                valid_jobs = dExclude.loc[dExclude[c]==False]['job_type'].tolist() + billable_jobs
+                timesheet_sum[c]  = fTimesheet_filtered.loc[fTimesheet_filtered['job_id'].isin(valid_jobs)].groupby(['cost_center','v_date'],as_index=False)['count'].sum()
                 timesheet_jobs[c] = fTimesheet_filtered.loc[fTimesheet_filtered['job_id'].isin(valid_jobs)]
-        allocation_dict: dict = {}
-        unallocated_amount: float = 0
-        for _, i in fGL_emp.iterrows():
-            df_type: str = [(k, v) for k, v in cogs_map.items() if i['Ledger_Code'] in v][0][0]
-            df_sum: pd.DataFrame = timesheet_sum[df_type]
-            timesheet_detailed: pd.DataFrame = timesheet_jobs[df_type]
+                timesheet_grand_sum[c]  = timesheet_sum[c]['count'].sum()
+        allocation_dict :dict = {}
+        unallocated_amount :float = 0
+        for _,i in fGL_emp.iterrows():
+            df_type :str = [(k,v) for k,v in cogs_map.items() if i['Ledger_Code'] in v][0][0]
+            df_sum :pd.DataFrame = timesheet_sum[df_type]
+            timesheet_detailed:pd.DataFrame = timesheet_jobs[df_type]
             try:
-                total_days: int = df_sum.loc[(df_sum['v_date'] == i['Voucher Date']) & (
-                        df_sum['cost_center'] == i['Cost Center']), 'count'].iloc[0]
-                timesheet_detailed = timesheet_detailed.loc[(timesheet_detailed['v_date'] == i['Voucher Date']) & (
-                        timesheet_detailed['cost_center'] == i['Cost Center']), ['job_id', 'count']]
+                total_days: int = df_sum.loc[(df_sum['v_date'] == i['Voucher Date']) & (df_sum['cost_center'] == i['Cost Center']),'count'].iloc[0]
+                timesheet_detailed = timesheet_detailed.loc[(timesheet_detailed['v_date']==i['Voucher Date']) & (timesheet_detailed['cost_center'] == i['Cost Center']),['job_id','count']]
                 allocation_dict_init = {}
-                for _, j in timesheet_detailed.iterrows():
-                    allocated: float = i['Amount'] / total_days * j['count']
-                    allocation_dict_init[j['job_id']] = allocated
-                allocation_dict = {k: allocation_dict_init.get(k, 0) + allocation_dict.get(k, 0) for k in
-                                   set(allocation_dict) | set(allocation_dict_init)}
+                for _,j in timesheet_detailed.iterrows():
+                    allocated :float =i['Amount']/total_days * j['count']
+                    allocation_dict_init[j['job_id']] =  allocated
+                allocation_dict = {k: allocation_dict_init.get(k,0) + allocation_dict.get(k,0) for k in set(allocation_dict)|set(allocation_dict_init)}
             except IndexError:
                 unallocated_amount += i['Amount']
                 allocation_dict['Un-Allocated'] = unallocated_amount
-        fOT_filtered: pd.DataFrame = fOT.loc[(fOT['date'] >= st_date) & (fOT['date'] <= period)]
-        fOT_filtered: dict = fOT_filtered.groupby(by='job_id')['net'].sum().to_dict()
-        allocation_dict = {k: allocation_dict.get(k, 0) + fOT.get(k, 0) for k in
-                           set(allocation_dict) | set(fOT_filtered)}
-        inv_filtered_cust: dict = fInvoices.loc[
-            (fInvoices['Invoice_Date'] >= st_date) & (fInvoices['Invoice_Date'] <= period), ['Order_ID',
-                                                                                             'Net_Amount']].groupby(
-            'Order_ID')['Net_Amount'].sum().to_dict()
-        allocation_dict = {k: allocation_dict.get(k, 0) + inv_filtered_cust.get(k, 0) for k in
-                           set(allocation_dict) | set(inv_filtered_cust)}
+        fOT_filtered :pd.DataFrame = fOT.loc[(fOT['date'] >= st_date) & (fOT['date']<=period)]
+        fOT_filtered :dict= fOT_filtered.groupby(by='job_id')['net'].sum().to_dict()
+        allocation_dict = {k:allocation_dict.get(k,0) + fOT_filtered.get(k,0) for k in set(allocation_dict)|set(fOT_filtered)}
+        inv_filtered_cust :dict= fInvoices.loc[(fInvoices['Invoice_Date'] >= st_date) & (fInvoices['Invoice_Date']<=period),['Order_ID','Net_Amount']].groupby('Order_ID')['Net_Amount'].sum().to_dict()
+        allocation_dict = {k:allocation_dict.get(k,0) + inv_filtered_cust.get(k,0) for k in set(allocation_dict)|set(inv_filtered_cust)}
+        for i in cogs_map:
+            z = fGL_other.loc[fGL_other['Ledger_Code'].isin(cogs_map[i])]['Amount'].sum()
+            if z != 0:
+                for _,row in timesheet_jobs[i].groupby(by='job_id',as_index=False)['count'].sum().iterrows():
+                    overhead_allocation :dict ={}
+                    value:float = z / timesheet_grand_sum[i] * row['count']
+                    overhead_allocation[row['job_id']] = value
+                    allocation_dict = {k:allocation_dict.get(k,0) + overhead_allocation.get(k,0) for k in set(allocation_dict)|set(overhead_allocation)}
+        acc_types :list = dExclude.loc[dExclude['group'].isin(['Accommodation']),'job_type'].tolist()
+        accommodation_cost :float = sum([v for k,v in allocation_dict.items() if k in acc_types])
+        non_accomo_sum :int = fTimesheet_filtered.loc[~fTimesheet_filtered['job_id'].isin(acc_types)]['count'].sum()
+        non_accomo :pd.DataFrame = fTimesheet_filtered.loc[~fTimesheet_filtered['job_id'].isin(acc_types)]
+        for _,row in non_accomo.iterrows():
+            accommodation_allocation :dict = {}
+            value :float = accommodation_cost/non_accomo_sum * row['count']
+            accommodation_allocation[row['job_id']] = value
+            allocation_dict = {k:allocation_dict.get(k,0) + accommodation_allocation.get(k,0) for k in set(allocation_dict)|set(accommodation_allocation)}
+        del allocation_dict['AC-ACCOMODATION']
+        del allocation_dict['AC']
         periodic_allocation[period] = allocation_dict
-    cy_cp: pd.DataFrame = pd.DataFrame(list(periodic_allocation[end_date].items()), columns=['Order_ID', 'Amount'])
-    cy_cp = pd.merge(left=cy_cp, right=dJobs[['Order_ID', 'Customer_Code', 'Employee_Code']], on='Order_ID', how='left')
-    cy_cp_cus: pd.DataFrame = cy_cp.groupby(by='Customer_Code', as_index=False)['Amount'].sum()
-    cy_cp_emp: pd.DataFrame = cy_cp.groupby(by='Employee_Code', as_index=False)['Amount'].sum()
-    cy_ytd: pd.DataFrame = pd.DataFrame()
-    for period in periods:
-        month_df: pd.DataFrame = pd.DataFrame(list(periodic_allocation[period].items()), columns=['Order_ID', 'Amount'])
-        cy_ytd = pd.concat([month_df, cy_ytd])
-    cy_ytd = pd.merge(left=cy_ytd, right=dJobs[['Order_ID', 'Customer_Code', 'Employee_Code']], on='Order_ID',
-                      how='left')
-    cy_ytd_cus: pd.DataFrame = cy_ytd.groupby(by='Customer_Code', as_index=False)['Amount'].sum()
-    cy_ytd_emp: pd.DataFrame = cy_ytd.groupby(by='Employee_Code', as_index=False)['Amount'].sum()
-    return {'periodic_allocation': periodic_allocation, 'cy_cp_cus': cy_cp_cus, 'cy_ytd_cus': cy_ytd_cus,
-            'cy_cp_emp': cy_cp_emp, 'cy_ytd_emp': cy_ytd_emp}
 
+
+    cy_cp:pd.DataFrame = pd.DataFrame(list(periodic_allocation[end_date].items()),columns=['Order_ID','Amount'])
+    cy_cp = pd.merge(left=cy_cp,right=dJobs[['Order_ID','Customer_Code','Employee_Code']],on='Order_ID',how='left')
+    cy_cp_cus :pd.DataFrame = cy_cp.groupby(by='Customer_Code',as_index=False)['Amount'].sum()
+    cy_cp_emp :pd.DataFrame= cy_cp.groupby(by='Employee_Code',as_index=False)['Amount'].sum()
+    cy_ytd:pd.DataFrame = pd.DataFrame()
+    for period in periods:
+        month_df :pd.DataFrame = pd.DataFrame(list(periodic_allocation[period].items()),columns=['Order_ID','Amount'])
+        cy_ytd = pd.concat([month_df,cy_ytd])
+    cy_ytd = pd.merge(left=cy_ytd,right=dJobs[['Order_ID','Customer_Code','Employee_Code']],on='Order_ID',how='left')
+    cy_ytd_cus:pd.DataFrame = cy_ytd.groupby(by='Customer_Code',as_index=False)['Amount'].sum()
+    cy_ytd_emp:pd.DataFrame = cy_ytd.groupby(by='Employee_Code',as_index=False)['Amount'].sum()
+    
+    return {'periodic_allocation':periodic_allocation,'cy_cp_cus':cy_cp_cus,'cy_ytd_cus':cy_ytd_cus,'cy_cp_emp':cy_cp_emp,'cy_ytd_emp':cy_ytd_emp}
 
 company_id = 0
 end_date: datetime = datetime(year=2024, month=7, day=31)
@@ -1589,6 +1595,7 @@ dJobs: pd.DataFrame = cleaned_data['dJobs']
 fTimesheet: pd.DataFrame = cleaned_data['fTimesheet']
 fOT: pd.DataFrame = cleaned_data['fOT']
 dExclude: pd.DataFrame = cleaned_data['dExclude']
+
 
 profitability: dict = job_profitability(fTimesheet=fTimesheet, fGL=merged, end_date=end_date, dEmployee=dEmployee,
                                         dExclude=dExclude, fOT=fOT, fInvoices=fInvoices, cogs_map=cogs_ledger_map,
@@ -2314,10 +2321,10 @@ for customer in customer_list:
     tbl_cust_gp_th.cells[2].text = 'ROI Month'
     tbl_cust_gp_th.cells[3].text = 'ROI YTD'
     tbl_cust_gp_td = tbl_cust_gp.rows[1]
-    tbl_cust_gp_td.cells[0].text = number_format(
-        num=cy_cp_profit_cus.loc[cy_cp_profit_cus['Customer_Code'].isin(cus_code), 'Amount'].sum())
-    tbl_cust_gp_td.cells[1].text = number_format(
-        num=cy_ytd_profit_cus.loc[cy_ytd_profit_cus['Customer_Code'].isin(cus_code), 'Amount'].sum())
+    cp_gp_pct = round(cy_cp_profit_cus.loc[cy_cp_profit_cus['Customer_Code'].isin(cus_code), 'Amount'].sum() / customer_info[customer]['cy_cp_rev'] * 100,2)
+    ytd_gp_pct = round(cy_ytd_profit_cus.loc[cy_ytd_profit_cus['Customer_Code'].isin(cus_code), 'Amount'].sum() / customer_info[customer]['cy_ytd_rev'] * 100,2)
+    tbl_cust_gp_td.cells[0].text = f"{number_format(num=cy_cp_profit_cus.loc[cy_cp_profit_cus['Customer_Code'].isin(cus_code), 'Amount'].sum())} | {cp_gp_pct}%"
+    tbl_cust_gp_td.cells[1].text = f"{number_format(num=cy_ytd_profit_cus.loc[cy_ytd_profit_cus['Customer_Code'].isin(cus_code), 'Amount'].sum())} | {ytd_gp_pct}%"
     tbl_cust_gp_td.cells[2].text = str(customer_info[customer]['cy_cp_roi'])
     tbl_cust_gp_td.cells[3].text = str(customer_info[customer]['cy_ytd_roi'])
     table_formatter(table_name=tbl_cust_gp, style_name='table_style_1', special=[])
@@ -2450,9 +2457,6 @@ for salesperson in salesperson_list:
     table_formatter(table_name=tbl_salesman_gp_2, style_name='table_style_1', special=[])
     document.add_page_break()
 
-fig_rev, ((cp_in_guard, cp_in_elv), (cp_ex_guard, cp_ex_elv), (ytd_in_guard, ytd_in_elv),
-          (ytd_ex_guard, ytd_ex_elv)) = plt.subplots(nrows=4, ncols=2, figsize=(7, 10))  # w,l
-
 cp_in_guard_df: pd.DataFrame = topcustomers(fInvoices=fInvoices, end_date=end_date, mode='month', div='guarding',
                                             type='Related', cnt=5)
 cp_in_elv_df: pd.DataFrame = topcustomers(fInvoices=fInvoices, end_date=end_date, mode='month', div='elv',
@@ -2469,112 +2473,65 @@ ytd_ex_guard_df: pd.DataFrame = topcustomers(fInvoices=fInvoices, end_date=end_d
                                              type='Market', cnt=5)
 ytd_ex_elv_df: pd.DataFrame = topcustomers(fInvoices=fInvoices, end_date=end_date, mode='ytd', div='elv', type='Market',
                                            cnt=5)
+cus_info_1 = {0: {0: {'name': 'Current Month Internal Guarding', 'df': cp_in_guard_df},
+                  1: {'name': 'Current Month Internal ELV', 'df': cp_in_elv_df}},
+              1: {0: {'name': 'Current Month External Guarding', 'df': cp_ex_guard_df},
+                  1: {'name': 'Current Month External ELV', 'df': cp_ex_elv_df}},
+              2: {0: {'name': 'Year to Date Internal Guarding', 'df': ytd_in_guard_df},
+                  1: {'name': 'Year to Date Internal ELV', 'df': ytd_in_guard_df}},
+              3: {0: {'name': 'Year to Date External Guarding', 'df': ytd_ex_elv_df},
+                  1: {'name': 'Year to Date External ELV', 'df': ytd_ex_elv_df}}}
+rows_report_1: int = 4
+cols_report_1: int = 2
+keydatacus1 = document.add_table(rows=rows_report_1, cols=cols_report_1)
 
-cp_in_guard.set_title('Current Month Internal Guarding', loc='left', **heading_format)
-t1 = cp_in_guard.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in cp_in_guard_df.values],
-                       colLabels=cp_in_guard_df.columns, cellLoc='center', loc='best')
-cp_in_guard.axis('off')
-
-cp_in_elv.set_title('Current Month Internal ELV', loc='left', **heading_format)
-t2 = cp_in_elv.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in cp_in_elv_df.values],
-                     colLabels=cp_in_elv_df.columns, cellLoc='center', loc='best')
-cp_in_elv.axis('off')
-
-cp_ex_guard.set_title('Current Month External Guarding', loc='left', **heading_format)
-t3 = cp_ex_guard.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in cp_ex_guard_df.values],
-                       colLabels=cp_ex_guard_df.columns, cellLoc='center', loc='best')
-cp_ex_guard.axis('off')
-
-cp_ex_elv.set_title('Current Month External ELV', loc='left', **heading_format)
-t4 = cp_ex_elv.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in cp_ex_elv_df.values],
-                     colLabels=cp_ex_elv_df.columns, cellLoc='center', loc='best')
-cp_ex_elv.axis('off')
-
-ytd_in_guard.set_title('Year to Date Internal Guarding', loc='left', **heading_format)
-t5 = ytd_in_guard.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in ytd_in_guard_df.values],
-                        colLabels=ytd_in_guard_df.columns, cellLoc='center',
-                        loc='best')
-ytd_in_guard.axis('off')
-
-ytd_in_elv.set_title('Year to Date Internal ELV', loc='left', **heading_format)
-t6 = ytd_in_elv.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in ytd_in_elv_df.values],
-                      colLabels=ytd_in_elv_df.columns, cellLoc='center', loc='best')
-ytd_in_elv.axis('off')
-
-ytd_ex_guard.set_title('Year to Date External Guarding', loc='left', **heading_format)
-t7 = ytd_ex_guard.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in ytd_ex_guard_df.values],
-                        colLabels=ytd_ex_guard_df.columns, cellLoc='center',
-                        loc='best')
-ytd_ex_guard.axis('off')
-
-ytd_ex_elv.set_title('Year to Date External ELV', loc='left', **heading_format)
-t8 = ytd_ex_elv.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in ytd_ex_elv_df.values],
-                      colLabels=ytd_ex_elv_df.columns, cellLoc='center', loc='best')
-ytd_ex_elv.axis('off')
-
-rev_plots: list = [t1, t2, t3, t4, t5, t6, t7, t8]
-
-for current_plot in rev_plots:
-    for key, cell in current_plot.get_celld().items():
-        if key[0] == 0:
-            cell.set_fontsize(50)  # Set font size for header
-            cell.set_text_props(fontfamily='sans-serif', fontweight='bold')  # Set font name for header
-        else:
-            cell.set_fontsize(30)  # Set font size for data cells
-plt.tight_layout()
-
-rev_buf = BytesIO()
-plt.tight_layout()
-plt.savefig(rev_buf, format='png', dpi=2400)
-plt.close(fig_rev)
-rev_buf.seek(0)
-doc.add_picture(rev_buf)
-
+for row in range(rows_report_1):
+    for col in range(cols_report_1):
+        row_0 = keydatacus1.rows[row].cells
+        row_0[col].text = cus_info_1[row][col]['name']
+        df: pd.DataFrame = cus_info_1[row][col]['df']
+        inner_tbl_rows = df.shape[0] + 1
+        inner_tbl_cols = df.shape[1]
+        inner_tbl = row_0[col].add_table(rows=1, cols=2)
+        inner_tbl_hdr = inner_tbl.rows[0].cells
+        inner_tbl_hdr[0].text = 'Customer'
+        inner_tbl_hdr[1].text = 'Amount'
+        for _, j in df.iterrows():
+            cells = inner_tbl.add_row().cells
+            cells[0].text = str(j['Customer'])
+            cells[1].text = number_format(j.iloc[1])
+        table_formatter(table_name=inner_tbl, style_name='table_style_1', special=['Total'])
 document.add_page_break()
-
-fig_cha_rev, ((cp_inc, cp_dec), (py_inc, py_dec)) = plt.subplots(nrows=2, ncols=2)
 
 inc_pp: pd.DataFrame = revenue_change(fInvoices=fInvoices, end_date=end_date, mode='cypp', order=True)
 dec_pp: pd.DataFrame = revenue_change(fInvoices=fInvoices, end_date=end_date, mode='cypp', order=False)
 inc_py: pd.DataFrame = revenue_change(fInvoices=fInvoices, end_date=end_date, mode='pycp', order=True)
 dec_py: pd.DataFrame = revenue_change(fInvoices=fInvoices, end_date=end_date, mode='pycp', order=False)
 
-cp_inc.set_title('Top 5 Customers with Increased\nRevenue compared to previous month', loc='left', **heading_format)
-t1 = cp_inc.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in inc_pp.values], colLabels=inc_pp.columns,
-                  cellLoc='center', loc='best')
-cp_inc.axis('off')
+cus_info_2 = {0: {0: {'name': 'Top 5 Customers with Incresed\nRevenue compared to previous month', 'df': inc_pp},
+                  1: {'name': 'Top 5 Customers with Decreased\nRevenue compared to previous month', 'df': dec_pp}},
+              1: {0: {'name': 'Top 5 Customers with Increased\nRevenue compared to previous year', 'df': inc_py},
+                  1: {'name': 'Top 5 Customers with Decreased\nRevenue compared to previous year', 'df': dec_py}}}
+rows_report_2: int = 2
+cols_report_2: int = 2
+keydatacus2 = document.add_table(rows=rows_report_1, cols=cols_report_1)  # r4,c2
 
-cp_dec.set_title('Top 5 Customers with Decreased\nRevenue compared to previous month', loc='left', **heading_format)
-t2 = cp_dec.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in dec_pp.values], colLabels=dec_pp.columns,
-                  cellLoc='center', loc='best')
-cp_dec.axis('off')
-
-py_inc.set_title('Top 5 Customers with Increased\nRevenue compared to previouse year', loc='left', **heading_format)
-t3 = py_inc.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in inc_py.values], colLabels=inc_py.columns,
-                  cellLoc='center', loc='best')
-py_inc.axis('off')
-
-py_dec.set_title('Top 5 Customers with Decreased\nRevenue compared to previous year', loc='left', **heading_format)
-t4 = py_dec.table(cellText=[[i[0].title(), f'{i[1]:,.0f}'] for i in dec_py.values], colLabels=dec_py.columns,
-                  cellLoc='center', loc='best')
-py_dec.axis('off')
-
-rev_cha_plots: list = [t1, t2, t3, t4]
-
-for current_plot in rev_cha_plots:
-    for key, cell in current_plot.get_celld().items():
-        if key[0] == 0:
-            cell.set_fontsize(50)  # Set font size for header
-            cell.set_text_props(fontfamily='sans-serif', fontweight='bold')  # Set font name for header
-        else:
-            cell.set_fontsize(30)  # Set font size for data cells
-rev_cha_buf = BytesIO()
-plt.tight_layout()
-plt.savefig(rev_cha_buf, format='png', dpi=2400)
-plt.close(fig_cha_rev)
-rev_cha_buf.seek(0)
-doc.add_picture(rev_cha_buf)
-
+for row in range(rows_report_2):
+    for col in range(cols_report_2):
+        row_0 = keydatacus2.rows[row].cells
+        row_0[col].text = cus_info_2[row][col]['name']
+        df: pd.DataFrame = cus_info_2[row][col]['df']
+        inner_tbl_rows = df.shape[0] + 1
+        inner_tbl_cols = df.shape[1]
+        inner_tbl = row_0[col].add_table(rows=1, cols=2)
+        inner_tbl_hdr = inner_tbl.rows[0].cells
+        inner_tbl_hdr[0].text = 'Customer'
+        inner_tbl_hdr[1].text = 'Amount'
+        for _, j in df.iterrows():
+            cells = inner_tbl.add_row().cells
+            cells[0].text = str(j['Customer'])
+            cells[1].text = number_format(j.iloc[1])
+        table_formatter(table_name=inner_tbl, style_name='table_style_1', special=['Total'])
 document.add_page_break()
 
 page_separator(head='HR', document=document)
