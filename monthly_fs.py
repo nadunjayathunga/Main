@@ -1492,7 +1492,9 @@ def job_profitability(fTimesheet:pd.DataFrame,fGL:pd.DataFrame,end_date:datetime
     periods :list =  pd.date_range(start=start_date, end=end_date, freq='ME').to_pydatetime().tolist()
     fGL = fGL.loc[:,['Cost Center','Voucher Date','Ledger_Code','Amount','Third_Level_Group_Name','Second_Level_Group_Name']]
     fGL = fGL.loc[~fGL['Ledger_Code'].isin([5010101002,5010101003])]
-    emp_list :list = dEmployee.index.tolist()
+    emp_list_full :list = dEmployee.index.tolist()
+    driversandcleaners:list = dEmployee.loc[dEmployee['Designation'].isin(['HEAVY DRIVER','DRIVER','CAMP SUPERVISOR'])].index.tolist()
+    emp_list :list = [i for i in emp_list_full if i not in driversandcleaners]
     timesheet_sum :dict = {'dc_emp_beni':None,'dc_trpt':None,'dc_out':None,'dc_sal':None}
     timesheet_jobs :dict = {'dc_emp_beni':None,'dc_trpt':None,'dc_out':None,'dc_sal':None}
     timesheet_grand_sum :dict = {'dc_emp_beni':None,'dc_trpt':None,'dc_out':None,'dc_sal':None}
@@ -1503,16 +1505,17 @@ def job_profitability(fTimesheet:pd.DataFrame,fGL:pd.DataFrame,end_date:datetime
         fGL_fitlered :pd.DataFrame = fGL.loc[(fGL['Voucher Date']>=st_date) & (fGL['Voucher Date']<=period) & 
                     (fGL['Second_Level_Group_Name'] == 'Manpower Cost') ,['Cost Center','Voucher Date','Ledger_Code','Amount']]
         fGL_emp :pd.DataFrame = fGL_fitlered.loc[fGL_fitlered['Cost Center'].isin(emp_list)]
-        fGL_other :pd.DataFrame = fGL_fitlered.loc[~fGL_fitlered['Cost Center'].isin(emp_list),['Amount','Ledger_Code']]
+        fGL_other :pd.DataFrame = fGL_fitlered.loc[~fGL_fitlered['Cost Center'].isin(emp_list),['Amount','Ledger_Code']].groupby('Ledger_Code',as_index=False)['Amount'].sum()
         fGL_emp = fGL_emp.groupby(by=['Cost Center','Voucher Date','Ledger_Code'],as_index=False)['Amount'].sum()
         fGL_emp = fGL_emp.loc[fGL_emp['Amount']!=0]
+        # TODO You may group this to cogs map using the ledger code. to be fixed. it will reduce the no of iteretion by approx 12.5%
         fTimesheet_filtered :pd.DataFrame = fTimesheet.loc[(fTimesheet['v_date'] >= st_date) & (fTimesheet['v_date']<=period)]
         fTimesheet_filtered = fTimesheet_filtered.groupby(['cost_center', 'job_id', 'v_date']).size().reset_index(name='count')
         billable_jobs:list = fTimesheet_filtered.loc[fTimesheet_filtered['job_id'].str.contains('ESS/CTR'),'job_id'].unique().tolist()
         
         for c in dExclude.columns:
-            if c not in  ['job_type','group']:
-                valid_jobs = dExclude.loc[dExclude[c]==False]['job_type'].tolist() + billable_jobs
+            if c not in ['job_type','group']:
+                valid_jobs :list = dExclude.loc[dExclude[c]==False]['job_type'].tolist() + billable_jobs
                 timesheet_sum[c]  = fTimesheet_filtered.loc[fTimesheet_filtered['job_id'].isin(valid_jobs)].groupby(['cost_center','v_date'],as_index=False)['count'].sum()
                 timesheet_jobs[c] = fTimesheet_filtered.loc[fTimesheet_filtered['job_id'].isin(valid_jobs)]
                 timesheet_grand_sum[c]  = timesheet_sum[c]['count'].sum()
@@ -1520,6 +1523,8 @@ def job_profitability(fTimesheet:pd.DataFrame,fGL:pd.DataFrame,end_date:datetime
         unallocated_amount :float = 0
         for _,i in fGL_emp.iterrows():
             df_type :str = [(k,v) for k,v in cogs_map.items() if i['Ledger_Code'] in v][0][0]
+            # TODO (a) YOU MAY FILTER df_sum/timesheet_sum and timesheet_detailed/timesheet_jobs only for those cost_centers apperiring in fGL_Emp. which will reduce the number of iterations.
+            # Also filter by the ledger as well 
             df_sum :pd.DataFrame = timesheet_sum[df_type]
             timesheet_detailed:pd.DataFrame = timesheet_jobs[df_type]
             try:
@@ -1527,6 +1532,7 @@ def job_profitability(fTimesheet:pd.DataFrame,fGL:pd.DataFrame,end_date:datetime
                 timesheet_detailed = timesheet_detailed.loc[(timesheet_detailed['v_date']==i['Voucher Date']) & (timesheet_detailed['cost_center'] == i['Cost Center']),['job_id','count']]
                 allocation_dict_init = {}
                 for _,j in timesheet_detailed.iterrows():
+                    # TODO (a) only those cost centers having a value will return a value from below. 
                     allocated :float =i['Amount']/total_days * j['count']
                     allocation_dict_init[j['job_id']] =  allocated
                 allocation_dict = {k: allocation_dict_init.get(k,0) + allocation_dict.get(k,0) for k in set(allocation_dict)|set(allocation_dict_init)}
@@ -1539,7 +1545,7 @@ def job_profitability(fTimesheet:pd.DataFrame,fGL:pd.DataFrame,end_date:datetime
         inv_filtered_cust :dict= fInvoices.loc[(fInvoices['Invoice_Date'] >= st_date) & (fInvoices['Invoice_Date']<=period),['Order_ID','Net_Amount']].groupby('Order_ID')['Net_Amount'].sum().to_dict()
         allocation_dict = {k:allocation_dict.get(k,0) + inv_filtered_cust.get(k,0) for k in set(allocation_dict)|set(inv_filtered_cust)}
         for i in cogs_map:
-            z = fGL_other.loc[fGL_other['Ledger_Code'].isin(cogs_map[i])]['Amount'].sum()
+            z:float = fGL_other.loc[fGL_other['Ledger_Code'].isin(cogs_map[i])]['Amount'].sum()
             if z != 0:
                 for _,row in timesheet_jobs[i].groupby(by='job_id',as_index=False)['count'].sum().iterrows():
                     overhead_allocation :dict ={}
@@ -1571,7 +1577,6 @@ def job_profitability(fTimesheet:pd.DataFrame,fGL:pd.DataFrame,end_date:datetime
     cy_ytd = pd.merge(left=cy_ytd,right=dJobs[['Order_ID','Customer_Code','Employee_Code']],on='Order_ID',how='left')
     cy_ytd_cus:pd.DataFrame = cy_ytd.groupby(by='Customer_Code',as_index=False)['Amount'].sum()
     cy_ytd_emp:pd.DataFrame = cy_ytd.groupby(by='Employee_Code',as_index=False)['Amount'].sum()
-    
     return {'periodic_allocation':periodic_allocation,'cy_cp_cus':cy_cp_cus,'cy_ytd_cus':cy_ytd_cus,'cy_cp_emp':cy_cp_emp,'cy_ytd_emp':cy_ytd_emp}
 
 company_id = 0
@@ -1777,7 +1782,7 @@ table_formatter(table_name=tbl_ytd_basic, style_name='table_style_1', special=pl
 document.add_page_break()
 
 plt.style.use('ggplot')
-fig_pl, (ax1, ax2) = plt.subplots(nrows=2, ncols=1)
+fig_pl, (ax1, ax2) = plt.subplots(nrows=2, ncols=1,figsize = (7.27,10))
 
 ratiopl: pd.DataFrame = ratios_pandl['gp']['cy_ytd_basic_monthwise']
 ax1.set_title(f'GP Vs NP VS EBITDA - {end_date.year}')
@@ -2026,7 +2031,7 @@ table_formatter(table_name=tbl_rpp, style_name='table_style_1', special=['Total'
 document.add_page_break()
 
 plt.style.use('ggplot')
-fig_bs, (ax1, ax2, ax3) = plt.subplots(nrows=3, ncols=1, sharex=True)
+fig_bs, (ax1, ax2, ax3) = plt.subplots(nrows=3, ncols=1, sharex=True,figsize = (7.27,10))
 
 bs_ratios_df: pd.DataFrame = bsratios(bsdata=bscombined, pldata=plcombined, periods=financial_periods_bs,
                                       end_date=end_date)
@@ -2387,7 +2392,9 @@ for idx, row in enumerate(salesperson_list):
 table_formatter(table_name=tbl_salesman_toc, style_name='table_style_1', special=[])
 document.add_page_break()
 
-for salesperson in salesperson_list:
+for idx, salesperson in enumerate(salesperson_list):
+    if (idx + 1) % 2 == 0:
+        document.add_paragraph('\n\n\n')
     salesperson_name: str = ' '.join(dEmployee.loc[salesperson, 'Employee_Name'].split(sep=' ')[:2]).title()
     salutation: str = "Mr." if dEmployee.loc[salesperson, 'Gender'] == 'Male' else "Ms."
     full_name: str = f'{salutation}{salesperson_name}'
@@ -2455,7 +2462,8 @@ for salesperson in salesperson_list:
     tbl_salesman_gp_td_2.cells[0].text = str(salesperson_stats[salesperson]['cy_cp_rev_contrib_pct'])
     tbl_salesman_gp_td_2.cells[1].text = str(salesperson_stats[salesperson]['cy_ytd_rev_contrib_pct'])
     table_formatter(table_name=tbl_salesman_gp_2, style_name='table_style_1', special=[])
-    document.add_page_break()
+    if (idx + 1) % 2 == 0:
+        document.add_page_break()
 
 cp_in_guard_df: pd.DataFrame = topcustomers(fInvoices=fInvoices, end_date=end_date, mode='month', div='guarding',
                                             type='Related', cnt=5)
@@ -2599,7 +2607,7 @@ hr_graph_2_buf.seek(0)
 doc.add_picture(hr_graph_2_buf)
 document.add_page_break()
 
-hr_fig_3, (jo_re, total_staff) = plt.subplots(nrows=2, ncols=1, sharex=True)
+hr_fig_3, (jo_re, total_staff) = plt.subplots(nrows=2, ncols=1, sharex=True,figsize = (7.27,10))
 
 jo_re.set_title('New Joiners and Leavers')
 jo_re.plot([i.strftime('%b') for i in emp_data['new_joiner'].index], emp_data['new_joiner']['Joined'],
@@ -2626,7 +2634,7 @@ ops_data: pd.DataFrame = operations(ftimesheet=fTimesheet, financial=cy_ytd_basi
 page_separator(head='Operations', document=document)
 
 plt.style.use('ggplot')
-fig_ops_1, (cost_line, ph_line) = plt.subplots(nrows=2, ncols=1, sharex=True)
+fig_ops_1, (cost_line, ph_line) = plt.subplots(nrows=2, ncols=1, sharex=True,figsize = (7.27,10))
 
 cost_line.set_title('Transportation and Accommodation Expenses')
 cost_line.plot([i.strftime('%b') for i in ops_data.index], ops_data['Transport'], label='Transport')
@@ -2640,6 +2648,7 @@ ph_line.plot([i.strftime('%b') for i in ops_data.index], (ops_data['Transport'] 
 ph_line.plot([i.strftime('%b') for i in ops_data.index], (ops_data['Accommodation'] / ops_data['acco_md']) * 30,
              label='Accommodation')
 ph_line.set_yticklabels(['{:,}'.format(int(i)) for i in ph_line.get_yticks()])
+ph_line.legend()
 
 ops_graph_1_buf = BytesIO()
 plt.tight_layout()
@@ -2649,7 +2658,7 @@ ops_graph_1_buf.seek(0)
 doc.add_picture(ops_graph_1_buf)
 document.add_page_break()
 
-fig_ops_2, (bill_nonbil, efficiency) = plt.subplots(nrows=2, ncols=1, sharex=True)
+fig_ops_2, (bill_nonbil, efficiency,non_billable) = plt.subplots(nrows=3, ncols=1, figsize = (7.73,10.63), sharex=True,gridspec_kw={'height_ratios': [1,1,2]})
 
 bill_nonbil.set_title('Billable Vs Non-Billable Mandays')
 bill_nonbil.plot([i.strftime('%b') for i in ops_data.index], ops_data['productive_md'], label='Productive')
@@ -2662,6 +2671,29 @@ efficiency.plot([i.strftime('%b') for i in ops_data.index], (ops_data['productiv
                 label='Efficiency')
 efficiency.set_yticklabels(['{:,.0f}%'.format(i) for i in efficiency.get_yticks()])
 efficiency.legend()
+
+
+periods = pd.date_range(start=start_date, end=end_date, freq='ME').to_pydatetime().tolist()
+
+c = {}
+exclude_dict = dExclude.groupby('group')['job_type'].apply(set).to_dict()
+for t in periods:
+    period_allocation = profitability['periodic_allocation'].get(t, {})
+    a = {}    
+    for group, job_types in exclude_dict.items():
+        for job_type in job_types:
+            if job_type in period_allocation:
+                a[group] = a.get(group, 0) + period_allocation[job_type]
+    a = {k: v for k, v in a.items() if v != 0}
+    c[t] = a
+results_df = pd.DataFrame.from_dict(c, orient='index').fillna(0) * -1
+
+non_billable.set_title('Non-Billable Cost')
+for p in results_df.columns:
+    non_billable.plot([i.strftime('%b') for i in results_df.index], results_df[p], label=p)
+non_billable.set_yticklabels(['{:,}'.format(int(i)) for i in non_billable.get_yticks()])
+non_billable.legend()
+
 
 ops_graph_2_buf = BytesIO()
 plt.tight_layout()
