@@ -24,7 +24,8 @@ df_customers = pd.read_excel(io=PATH, sheet_name='dCustomers', usecols=['Custome
 df_jobs = pd.read_excel(io=PATH, sheet_name='dJobs', usecols=['Job_Number', 'Customer_Code','emp_id'])
 df_jobs['Job_Code'] = df_jobs['Job_Number'].str.split('-', expand=True)[0].str.strip()
 
-ruwais_jobs: list = df_jobs.loc[df_jobs['Customer_Code'].isin(exclusion['customers']), 'Job_Code'].to_list()
+ruwais_jobs: list = df_jobs.loc[df_jobs['Customer_Code'].isin(exclusion['ruwais']['customers']), 'Job_Code'].to_list()
+qafco_jobs: list = df_jobs.loc[df_jobs['Customer_Code'].isin(exclusion['qafco']['customers']), 'Job_Code'].to_list()
 # exclusions includes customers and staff relates to Al Ruwais Port Operations.
 
 def expenses_allocation(job_id: str) -> float:
@@ -97,6 +98,16 @@ def total_revenue(inv_date: datetime, job_id: str) -> tuple:
         freight_rev_filt = (df_data['Voucher_Date'] >= start_date) & (
                 df_data['Voucher_Date'] <= end_date) & (df_data['Ledger_Code'] == 4010201003) & (
                                df_data['Job_Code'].isin(ruwais_jobs))
+    elif job_id in qafco_jobs:
+        clearance_rev_filt = (df_data['Voucher_Date'] >= start_date) & (
+                df_data['Voucher_Date'] <= end_date) & (df_data['Ledger_Code'] == 4010201001) & (
+                                 ~df_data['Job_Code'].isin(ruwais_jobs))
+        transport_rev_filt = (df_data['Voucher_Date'] >= start_date) & (
+                df_data['Voucher_Date'] <= end_date) & (df_data['Ledger_Code'] == 4010201002) & (
+                                 ~df_data['Job_Code'].isin(ruwais_jobs))
+        freight_rev_filt = (df_data['Voucher_Date'] >= start_date) & (
+                df_data['Voucher_Date'] <= end_date) & (df_data['Ledger_Code'] == 4010201003) & (
+                               df_data['Job_Code'].isin(qafco_jobs))
     else:
         clearance_rev_filt = (df_data['Voucher_Date'] >= start_date) & (
                 df_data['Voucher_Date'] <= end_date) & (df_data['Ledger_Code'] == 4010201001) & (
@@ -127,23 +138,34 @@ def salary_expense(inv_date: datetime, job_id: str) -> tuple:
     if job_id in ruwais_jobs:
         clearance_salary_filt = (df_gl['Voucher Date'] >= start_date) & (
                 df_gl['Voucher Date'] <= end_date) & (df_gl['Ledger Code'].isin([5010201001, 5010201004])) & (
-                                    df_gl['Cost Center'].isin(exclusion['staff']))
+                                    df_gl['Cost Center'].isin(exclusion['ruwais']['staff']))
         transport_salary_filt = (df_gl['Voucher Date'] >= start_date) & (
                 df_gl['Voucher Date'] <= end_date) & (df_gl['Ledger Code'].isin([5010201002, 5010201005])) & (
-                                    df_gl['Cost Center'].isin(exclusion['staff']))
+                                    df_gl['Cost Center'].isin(exclusion['ruwais']['staff']))
         freight_salary_filt = (df_gl['Voucher Date'] >= start_date) & (
                 df_gl['Voucher Date'] <= end_date) & (df_gl['Ledger Code'].isin([5010201003, 5010201006])) & (
-                                  df_gl['Cost Center'].isin(exclusion['staff']))
+                                  df_gl['Cost Center'].isin(exclusion['ruwais']['staff']))
+    elif job_id in qafco_jobs:
+        clearance_salary_filt = (df_gl['Voucher Date'] >= start_date) & (
+                df_gl['Voucher Date'] <= end_date) & (df_gl['Ledger Code'].isin([5010201001, 5010201004])) & (
+                                    ~df_gl['Cost Center'].isin(exclusion['ruwais']['staff']))
+        transport_salary_filt = (df_gl['Voucher Date'] >= start_date) & (
+                df_gl['Voucher Date'] <= end_date) & (df_gl['Ledger Code'].isin([5010201002, 5010201005])) & (
+                                    ~df_gl['Cost Center'].isin(exclusion['ruwais']['staff']))
+        freight_salary_filt = (df_gl['Voucher Date'] >= start_date) & (
+                df_gl['Voucher Date'] <= end_date) & (df_gl['Ledger Code'].isin([5010201003, 5010201006])) & (
+                                  df_gl['Cost Center'].isin(exclusion['qafco']['staff'])) # fright
     else:
         clearance_salary_filt = (df_gl['Voucher Date'] >= start_date) & (
                 df_gl['Voucher Date'] <= end_date) & (df_gl['Ledger Code'].isin([5010201001, 5010201004])) & (
-                                    ~df_gl['Cost Center'].isin(exclusion['staff']))
+                                    ~df_gl['Cost Center'].isin(exclusion['ruwais']['staff']))
         transport_salary_filt = (df_gl['Voucher Date'] >= start_date) & (
                 df_gl['Voucher Date'] <= end_date) & (df_gl['Ledger Code'].isin([5010201002, 5010201005])) & (
-                                    ~df_gl['Cost Center'].isin(exclusion['staff']))
+                                    ~df_gl['Cost Center'].isin(exclusion['ruwais']['staff']))
         freight_salary_filt = (df_gl['Voucher Date'] >= start_date) & (
                 df_gl['Voucher Date'] <= end_date) & (df_gl['Ledger Code'].isin([5010201003, 5010201006])) & (
-                                  ~df_gl['Cost Center'].isin(exclusion['staff']))
+                                  ~df_gl['Cost Center'].isin(exclusion['ruwais']['staff'])) & (
+                                  ~df_gl['Cost Center'].isin(exclusion['qafco']['staff']))
 
     clearance_salary: float = df_gl.loc[clearance_salary_filt, 'Amount'].sum()
     transport_salary: float = df_gl.loc[transport_salary_filt, 'Amount'].sum()
@@ -168,7 +190,7 @@ def salary_allocation(job_id: str) -> float:
     total_salary_allocated: float = 0
     for invoice in invoices:
         invoice_date: datetime = df_data.loc[(
-                df_data['Voucher Number'] == invoice), 'Voucher_Date'].tolist()[0]
+                df_data['Voucher Number'] == invoice), 'Voucher_Date'].iloc[0]
         clearance_rev_filt = (df_data['Voucher Number'] == invoice) & (
                 df_data['Ledger_Code'] == 4010201001)
         transport_rev_filt = (df_data['Voucher Number'] == invoice) & (
@@ -209,6 +231,9 @@ def salary_allocation(job_id: str) -> float:
         allocated_total: float = allocated_clearance + allocated_transport + allocated_freight
         # as there are certain jobs which contain multiple jobs
         total_salary_allocated += allocated_total
+        if job_id in qafco_jobs:
+            print(f'{job_id}:claranceRev:{total_clearance_rev},trptRev:{total_transport_rev},freightRev:{total_freight_rev},clearanceSal:{clearance_salary},trptSal:{transport_salary},freightSal:{freight_salary}')
+            print(f'alloClearanc:{allocated_clearance},alloTrpt:{allocated_transport},alloFre:{allocated_freight}')
     return total_salary_allocated
 
 
@@ -314,7 +339,7 @@ def gross_revenue(row) -> float:
     return revenue
 
 
-def profitability_overall(emp_ids:list=list(set(df_jobs['emp_id'].tolist()))) -> pd.DataFrame:
+def profitability_overall(emp_ids:list=df_jobs['emp_id'].unique()) -> pd.DataFrame:
     """ A dataframe consist of Customer Name|Gross Revenue|Net Revenue|Initial Profit|Interest|Revised Profit
     Grouped by customer
 
@@ -324,7 +349,7 @@ def profitability_overall(emp_ids:list=list(set(df_jobs['emp_id'].tolist()))) ->
     jobs:list = [i.split('-')[0] for i in df_jobs.loc[df_jobs['emp_id'].isin(emp_ids),'Job_Number'].tolist()]
     # list of all the jobs transacted from the start of the company
     jobs_list_filt = (df_data['Voucher_Date'] >= START_DATE) & (df_data['Voucher_Date'] <= END_DATE) & (df_data['Type'] == 'SI') & (df_data['Job_Code'].isin(jobs))
-    jobs_list: list = list(set(df_data.loc[jobs_list_filt, 'Job_Code'].to_list()))
+    jobs_list: list = df_data.loc[jobs_list_filt,'Job_Code'].unique()
     overall_report: pd.DataFrame = pd.DataFrame(data={'Job_Code': jobs_list})
     overall_report['Interest'], overall_report['Investment'] = zip(*overall_report.apply(job_interest, axis=1))
     #Investment consist of supplier invoices recorded until a given date
@@ -343,5 +368,8 @@ def profitability_overall(emp_ids:list=list(set(df_jobs['emp_id'].tolist()))) ->
 
 employees:list = ['NBNL0101','NBNL0085','NBNL0033','NBNL0094']
 
-for employee in employees:
-    profitability_overall(emp_ids=[employee])
+# for employee in employees:
+#     profitability_overall(emp_ids=[employee])
+profitability_overall()
+
+

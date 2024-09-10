@@ -1400,7 +1400,7 @@ def employee_related(data: pd.DataFrame) -> dict:
     return employee_data
 
 
-def operations(ftimesheet: pd.DataFrame, financial: pd.DataFrame, end_date: datetime) -> dict:
+def operations(ftimesheet: pd.DataFrame, financial: pd.DataFrame, end_date: datetime,dExclude:pd.DataFrame) -> dict:
     start_date: datetime = datetime(year=end_date.year, month=1, day=1)
 
     ftimesheet: pd.DataFrame = ftimesheet.loc[
@@ -1411,15 +1411,8 @@ def operations(ftimesheet: pd.DataFrame, financial: pd.DataFrame, end_date: date
     df_accommodation: pd.DataFrame = ftimesheet.copy()
     df_unproductive: pd.DataFrame = ftimesheet.copy()
     df_transport = df_transport.loc[
-        ~df_transport['job_id'].isin(['AC-ACCOMODATION', 'Annual Leave', 'OF-Off', 'PS-PATROLING SUPERVISOR',
-                                      'Paternity Leave', 'SB-STANDBY', 'Sick Leave - FP', 'UL-Unpaid Leave',
-                                      'Unpaid Leave'])]
-    df_unproductive = df_unproductive.loc[df_unproductive['job_id'].isin(
-        ['AC-ACCOMODATION', 'Annual Leave', 'CI-CLIENT INTERVIEW', 'FP-FINGER PRINT', 'HO-HEAD OFFICE', 'ME-MOI Exam',
-         'MM-MOI MEDICAL', 'MT-MOI Training',
-         'OF-Off', 'OJ-ON JOB TRAINING', 'Paternity Leave', 'QM-QID MEDICAL', 'SB-STANDBY', 'Sick Leave - FP',
-         'TN-TRAINING', 'UL-Unpaid Leave',
-         'Unpaid Leave', 'WK-Worked'])]
+        ~df_transport['job_id'].isin(dExclude.loc[dExclude['dc_trpt']==True,'job_type'].tolist())]
+    df_unproductive = df_unproductive.loc[df_unproductive['job_id'].isin(dExclude.loc[dExclude['dc_emp_beni']==False,'job_type'].tolist())]
 
     df_transport = df_transport.groupby(by=['v_date'])['cost_center'].count().reset_index().rename(
         columns={'cost_center': 'trpt_md'})
@@ -1585,6 +1578,7 @@ start_date: datetime = datetime(year=end_date.year - 1, month=1, day=1)
 sys_cut_off: datetime = datetime(year=2020, month=11, day=1)
 VOUCHER_TYPES: list = ['Project Invoice',
                        'Contract Invoice', 'SERVICE INVOICE', 'Sales Invoice']
+CUST_LOGO_PATH = r'C:\Masters\images\customer'
 
 cleaned_data: dict = preprocessing(data=data_sources(company_id=0))
 fGL: pd.DataFrame = cleaned_data['fGL']
@@ -2254,8 +2248,21 @@ document.add_page_break()
 
 for customer in customer_list:
     cus_code: list = dCustomers.loc[(dCustomers['Cus_Name'] == customer), 'Customer_Code'].tolist()
-    cy_cp_pl_company_title = document.add_paragraph().add_run(customer.upper())
+    table_title = document.add_table(rows=1, cols=2)
+    r0c0 = table_title.cell(0,0)
+    cy_cp_pl_company_title = r0c0.add_paragraph().add_run(customer.upper())
     apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
+    r0c1 =  table_title.cell(0,1)
+    cust_logo = r0c1.add_paragraph().add_run()
+    try:
+        logo = cust_logo.add_picture(f'{CUST_LOGO_PATH}\{cus_code[0]}.png', width=Inches(1.5),height=Inches(1.89))
+        logo = document.paragraphs[-1]
+        logo.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    except FileNotFoundError:
+        logo = cust_logo.add_picture(f'{CUST_LOGO_PATH}\default.png')
+        logo = document.paragraphs[-1]
+        logo.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
     tbl_cust_main = document.add_table(rows=2, cols=4)
     tbl_cust_main_th = tbl_cust_main.rows[0]
     tbl_cust_main_th.cells[0].text = 'Date of Establishment'
@@ -2278,8 +2285,8 @@ for customer in customer_list:
     tbl_cust_rev_th_1.cells[
         3].text = f'CY PP Revenue\n({(end_date.replace(day=1) - timedelta(days=1)).strftime("%B")} Month)'
     tbl_cust_rev_td_1 = tbl_cust_rev_1.rows[1]
-    arrow_type_cy: str = '↑' if customer_info[customer]['cy_cp_rev'] >= customer_info[customer]['py_cp_rev'] else '↓'
-    arrow_type_ytd: str = '↑' if customer_info[customer]['cy_ytd_rev'] >= customer_info[customer]['py_ytd_rev'] else '↓'
+    arrow_type_cy: str = '⇑' if customer_info[customer]['cy_cp_rev'] >= customer_info[customer]['py_cp_rev'] else '⇓'
+    arrow_type_ytd: str = '⇑' if customer_info[customer]['cy_ytd_rev'] >= customer_info[customer]['py_ytd_rev'] else '⇓'
     tbl_cust_rev_td_1.cells[0].text = f"{number_format(num=customer_info[customer]['cy_cp_rev'])} {arrow_type_cy}"
     tbl_cust_rev_td_1.cells[1].text = f"{number_format(num=customer_info[customer]['cy_ytd_rev'])} {arrow_type_ytd}"
     tbl_cust_rev_td_1.cells[2].text = str(customer_info[customer]['cy_cp_rev_contrib_pct'])
@@ -2481,14 +2488,14 @@ ytd_ex_guard_df: pd.DataFrame = topcustomers(fInvoices=fInvoices, end_date=end_d
                                              type='Market', cnt=5)
 ytd_ex_elv_df: pd.DataFrame = topcustomers(fInvoices=fInvoices, end_date=end_date, mode='ytd', div='elv', type='Market',
                                            cnt=5)
-cus_info_1 = {0: {0: {'name': 'Current Month Internal Guarding', 'df': cp_in_guard_df},
-                  1: {'name': 'Current Month Internal ELV', 'df': cp_in_elv_df}},
-              1: {0: {'name': 'Current Month External Guarding', 'df': cp_ex_guard_df},
-                  1: {'name': 'Current Month External ELV', 'df': cp_ex_elv_df}},
-              2: {0: {'name': 'Year to Date Internal Guarding', 'df': ytd_in_guard_df},
-                  1: {'name': 'Year to Date Internal ELV', 'df': ytd_in_guard_df}},
-              3: {0: {'name': 'Year to Date External Guarding', 'df': ytd_ex_elv_df},
-                  1: {'name': 'Year to Date External ELV', 'df': ytd_ex_elv_df}}}
+cus_info_1 = {0: {0: {'name': 'Current Month Internal Guarding (Top Five)', 'df': cp_in_guard_df},
+                  1: {'name': 'Current Month Internal ELV (Top Five)', 'df': cp_in_elv_df}},
+              1: {0: {'name': '\nCurrent Month External Guarding (Top Five)', 'df': cp_ex_guard_df},
+                  1: {'name': '\nCurrent Month External ELV (Top Five)', 'df': cp_ex_elv_df}},
+              2: {0: {'name': '\nYear to Date Internal Guarding (Top Five)', 'df': ytd_in_guard_df},
+                  1: {'name': '\nYear to Date Internal ELV (Top Five)', 'df': ytd_in_guard_df}},
+              3: {0: {'name': '\nYear to Date External Guarding (Top Five)', 'df': ytd_ex_elv_df},
+                  1: {'name': '\nYear to Date External ELV (Top Five)', 'df': ytd_ex_elv_df}}}
 rows_report_1: int = 4
 cols_report_1: int = 2
 keydatacus1 = document.add_table(rows=rows_report_1, cols=cols_report_1)
@@ -2518,8 +2525,8 @@ dec_py: pd.DataFrame = revenue_change(fInvoices=fInvoices, end_date=end_date, mo
 
 cus_info_2 = {0: {0: {'name': 'Top 5 Customers with Incresed\nRevenue compared to previous month', 'df': inc_pp},
                   1: {'name': 'Top 5 Customers with Decreased\nRevenue compared to previous month', 'df': dec_pp}},
-              1: {0: {'name': 'Top 5 Customers with Increased\nRevenue compared to previous year', 'df': inc_py},
-                  1: {'name': 'Top 5 Customers with Decreased\nRevenue compared to previous year', 'df': dec_py}}}
+              1: {0: {'name': '\nTop 5 Customers with Increased\nRevenue compared to previous year', 'df': inc_py},
+                  1: {'name': '\nTop 5 Customers with Decreased\nRevenue compared to previous year', 'df': dec_py}}}
 rows_report_2: int = 2
 cols_report_2: int = 2
 keydatacus2 = document.add_table(rows=rows_report_1, cols=cols_report_1)  # r4,c2
@@ -2629,7 +2636,7 @@ hr_graph_3_buf.seek(0)
 doc.add_picture(hr_graph_3_buf)
 document.add_page_break()
 
-ops_data: pd.DataFrame = operations(ftimesheet=fTimesheet, financial=cy_ytd_basic_monthwise, end_date=end_date)
+ops_data: pd.DataFrame = operations(ftimesheet=fTimesheet, financial=cy_ytd_basic_monthwise, end_date=end_date,dExclude=dExclude)
 
 page_separator(head='Operations', document=document)
 
@@ -2638,7 +2645,11 @@ fig_ops_1, (cost_line, ph_line) = plt.subplots(nrows=2, ncols=1, sharex=True,fig
 
 cost_line.set_title('Transportation and Accommodation Expenses')
 cost_line.plot([i.strftime('%b') for i in ops_data.index], ops_data['Transport'], label='Transport')
+for xy in zip([i.strftime('%b') for i in ops_data.index],ops_data['Transport'].tolist()):
+    cost_line.annotate('{:,}K'.format(int(xy[1]/1_000)) ,xy=xy)
 cost_line.plot([i.strftime('%b') for i in ops_data.index], ops_data['Accommodation'], label='Accommodation')
+for xy in zip([i.strftime('%b') for i in ops_data.index],ops_data['Accommodation'].tolist()):
+    cost_line.annotate('{:,}K'.format(int(xy[1]/1_000)) ,xy=xy)
 cost_line.set_yticklabels(['{:,}'.format(int(i)) for i in cost_line.get_yticks()])
 cost_line.legend()
 

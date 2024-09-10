@@ -4,8 +4,8 @@ import pandas as pd
 PATH = r'C:\Masters\Data-NBNL.xlsx'
 # OVERDRAFT_START_DATE: datetime = datetime(year=2020, month=11, day=1)
 OVERDRAFT_START_DATE: datetime = datetime(year=2022, month=11, day=13)
-START_DATE: datetime = datetime(year=2024, month=7, day=1)
-END_DATE: datetime = datetime(year=2024, month=7, day=31)
+START_DATE: datetime = datetime(year=2024, month=8, day=1)
+END_DATE: datetime = datetime(year=2024, month=8, day=31)
 OVERDRAFT_INTEREST_PCT = 0.08  # Current Overdraft Interest
 
 # Finance/MIS Reports/Voucher Details/Job Report with Service Elements
@@ -47,8 +47,9 @@ df_jobs.drop_duplicates(subset=['Job_Number'], keep='first', inplace=True)
 df_jobs.set_index(keys='Job_Number', inplace=True)
 
 # exclusions includes customers and staff relates to Al Ruwais Port Operations.
-exclusion: dict = {'customers': ['CUS0794', 'CUS0781', 'CUS0787', 'CUS0613', 'CUS0756','CUS0813'],
-                   'staff': ['NBNL0095', 'NBNL0096', 'NBNL0106']}
+exclusion: dict = {'ruwais':{'customers': ['CUS0794', 'CUS0781', 'CUS0787', 'CUS0613', 'CUS0756','CUS0813','CUS0810'],
+                   'staff': ['NBNL0095', 'NBNL0096', 'NBNL0106']},
+                   'qafco':{'customers': ['CUS0806'],'staff': ['NBNL0108']}}
 
 
 def supplier_payments(df_merged: pd.DataFrame, job_id: str) -> pd.DataFrame:
@@ -226,25 +227,32 @@ def revenue_totals(ledger: int, end_date: datetime, df_merged: pd.DataFrame, df_
     # list of direct salary ledgers for a given revenue stream (i.e Salaries Expense - Transport-> ['Employee Benefits - Transport','Salaries Expense - Transport'])
     cost_ledgers: list = account_map(ledger=ledger, df_coa=df_coa)
 
-    if customer_code in exclusion['customers']:
+    if customer_code in exclusion['ruwais']['customers']:
         # for those customers are related to Al Ruwais Operations, it is required to allocate the salary cost for those employees who work exclusively work
         # for that operations details to which can be found in exclusions dictionery.
         job_ids: list = df_jobs.loc[df_jobs['Customer_Code'].isin(
-            exclusion['customers'])].index.to_list()
+            exclusion['ruwais']['customers'])].index.to_list()
         # job ids relates to customers mentioned in the exclusions dictionery
         net_revenue_filt = (df_merged['Voucher_Date'] >= start_date) & (df_merged['Voucher_Date'] <= end_date) & (
             df_merged['Ledger_Code'] == ledger) & (df_merged['Job_Code'].isin(job_ids))  # start_date & end_date for a given month 01/11/2023 & 30/11/2023
     # total net revenue for a givne month for a given revenue stream (i.e Transportation for 01-11-2023 till 30-11-2023)
         salary_cost_filt = (df_gl['Voucher Date'] >= start_date) & (df_gl['Voucher Date'] <= end_date) & (
-            df_gl['Ledger Code'].isin(cost_ledgers)) & (df_gl['Cost Center'].isin(exclusion['staff']))
+            df_gl['Ledger Code'].isin(cost_ledgers)) & (df_gl['Cost Center'].isin(exclusion['ruwais']['staff']))
         # exclusions['staff'] is a list which contains employees who are working exclusively for Al Ruwais Operations.
+    elif customer_code in exclusion['qafco']['customers']:
+        job_ids: list = df_jobs.loc[df_jobs['Customer_Code'].isin(
+            exclusion['qafco']['customers'])].index.to_list()
+        net_revenue_filt = (df_merged['Voucher_Date'] >= start_date) & (df_merged['Voucher_Date'] <= end_date) & (
+            df_merged['Ledger_Code'] == ledger) & (df_merged['Job_Code'].isin(job_ids))  
+        salary_cost_filt = (df_gl['Voucher Date'] >= start_date) & (df_gl['Voucher Date'] <= end_date) & (
+            df_gl['Ledger Code'].isin(cost_ledgers)) & (df_gl['Cost Center'].isin(exclusion['qafco']['staff']))
     else:
         # for those customers who are not part of Al Ruwais Operations
         net_revenue_filt = (df_merged['Voucher_Date'] >= start_date) & (df_merged['Voucher_Date'] <= end_date) & (
-            df_merged['Ledger_Code'] == ledger) & (df_merged['Job_Code'].isin(df_jobs.loc[~df_jobs['Customer_Code'].isin(exclusion['customers'])].index.to_list()))
+            df_merged['Ledger_Code'] == ledger) & (df_merged['Job_Code'].isin(df_jobs.loc[~df_jobs['Customer_Code'].isin(exclusion['ruwais']['customers'] +exclusion['qafco']['customers'] )].index.to_list()))
         salary_cost_filt = (df_gl['Voucher Date'] >= start_date) & (df_gl['Voucher Date'] <= end_date) & (
-            df_gl['Ledger Code'].isin(cost_ledgers)) & (~df_gl['Cost Center'].isin(exclusion['staff']))  # total direct salary cost for a given month for a
-    # given revenue stream (i.e Transportation for 01-11-2023 till 30-11-2023)
+            df_gl['Ledger Code'].isin(cost_ledgers)) & (~df_gl['Cost Center'].isin(exclusion['ruwais']['staff'] + exclusion['qafco']['staff']))  # total direct salary cost for a given month for a
+    # given revenue stream (i.e Transportation for 01-11-2023 till 30-11-2023) !!! this is wrong. Custom clearance and transportation charges of qafco related jobs are not calculated correctly. 
 
     total_revenue: float = df_merged.loc[net_revenue_filt, 'Net'].sum()
     total_salary_cost: float = df_gl.loc[salary_cost_filt, 'Amount'].sum()
