@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FixedLocator, FixedFormatter
 from dateutil.relativedelta import relativedelta
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -237,6 +238,7 @@ def preprocessing(data: dict) -> dict:
     fOT.loc[:, 'net'] = fOT['net'] * -1
     fTimesheet = fTimesheet.loc[~fTimesheet['job_id'].isin(['discharged', 'not_joined'])]
     fTimesheet.loc[:, 'v_date'] = fTimesheet['v_date'] + pd.offsets.MonthEnd(0)
+    dEmployee['travel_cost'].fillna(0,inplace=True)
     return {'fGL': fGL, 'dEmployee': dEmployee, 'dCoAAdler': dCoAAdler, 'fInvoices': fInvoices, 'fBudget': fBudget,
             'dCustomers': dCustomers, 'fCollection': fCollection, 'dJobs': dJobs, 'fTimesheet': fTimesheet, 'fOT': fOT,
             'dExclude': dExclude}
@@ -1573,7 +1575,7 @@ def job_profitability(fTimesheet:pd.DataFrame,fGL:pd.DataFrame,end_date:datetime
     return {'periodic_allocation':periodic_allocation,'cy_cp_cus':cy_cp_cus,'cy_ytd_cus':cy_ytd_cus,'cy_cp_emp':cy_cp_emp,'cy_ytd_emp':cy_ytd_emp}
 
 company_id = 0
-end_date: datetime = datetime(year=2024, month=7, day=31)
+end_date: datetime = datetime(year=2024, month=8, day=31)
 start_date: datetime = datetime(year=end_date.year - 1, month=1, day=1)
 sys_cut_off: datetime = datetime(year=2020, month=11, day=1)
 VOUCHER_TYPES: list = ['Project Invoice',
@@ -1788,7 +1790,9 @@ ax1.plot([i.strftime('%b') for i in ratiopl['Voucher Date']], (ratiopl['EBITDA']
 ax1.plot([i.strftime('%b') for i in ratiopl['Voucher Date']], (ratiopl['Net Profit'] / ratiopl['Total Revenue'] * 100),
          label='NP')
 
-ax1.set_yticklabels(['{:,.0f}%'.format(i) for i in ax1.get_yticks()])
+tick_locations = ax1.get_yticks()
+ax1.yaxis.set_major_locator(FixedLocator(tick_locations))
+ax1.yaxis.set_major_formatter(FixedFormatter(['{:,.0f}'.format(int(i)) for i in tick_locations]))
 ax1.legend()
 
 ratioplyearly: pd.DataFrame = ratios_pandl['plyearly']
@@ -1804,7 +1808,9 @@ ax2.plot([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in ratioplyearly
          label='NP')
 
 ax2.invert_xaxis()
-ax2.set_yticklabels(['{:,.0f}%'.format(i) for i in ax2.get_yticks()])
+tick_locations = ax2.get_yticks()
+ax2.yaxis.set_major_locator(FixedLocator(tick_locations))
+ax2.yaxis.set_major_formatter(FixedFormatter(['{:,.0f}'.format(int(i)) for i in tick_locations]))
 ax2.legend()
 
 pl_graph_buf = BytesIO()
@@ -2032,15 +2038,21 @@ bs_ratios_df: pd.DataFrame = bsratios(bsdata=bscombined, pldata=plcombined, peri
 
 ax1.set_title('Current Ratio')
 ax1.plot([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in bs_ratios_df['period']], bs_ratios_df['cr'])
-ax1.set_yticklabels(['{:,.2f}'.format(i) for i in ax1.get_yticks()])
+tick_locations = ax1.get_yticks()
+ax1.yaxis.set_major_locator(FixedLocator(tick_locations))
+ax1.yaxis.set_major_formatter(FixedFormatter(['{:,.2f}'.format(int(i)) for i in tick_locations]))
 
 ax2.set_title('Assets Turnover Ratio')
 ax2.plot([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in bs_ratios_df['period']], bs_ratios_df['ato'])
-ax2.set_yticklabels(['{:,.2f}'.format(i) for i in ax2.get_yticks()])
+tick_locations = ax2.get_yticks()
+ax2.yaxis.set_major_locator(FixedLocator(tick_locations))
+ax2.yaxis.set_major_formatter(FixedFormatter(['{:,.2f}'.format(int(i)) for i in tick_locations]))
 
 ax3.set_title('Return on Equity')
 ax3.plot([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in bs_ratios_df['period']], bs_ratios_df['roe'])
-ax3.set_yticklabels(['{:,.0f}%'.format(i) for i in ax3.get_yticks()])
+tick_locations = ax3.get_yticks()
+ax3.yaxis.set_major_locator(FixedLocator(tick_locations))
+ax3.yaxis.set_major_formatter(FixedFormatter(['{:,.0f}%'.format(int(i)) for i in tick_locations]))
 ax3.invert_xaxis()
 
 bs_graph_buf = BytesIO()
@@ -2129,10 +2141,14 @@ ax1.table(cellText=[[j[0]] + [f'{i:,.0f}' for i in j if isinstance(i, float)] fo
 ax1.set_title('Market/Related-party sales')
 ax1.axis('off')
 ax2.plot([i.strftime('%b') for i in rev_category_line.index], rev_category_line['Market'])
-ax2.set_yticklabels(['{:,}'.format(int(i)) for i in ax2.get_yticks()])
+tick_locations = ax2.get_yticks()
+ax2.yaxis.set_major_locator(FixedLocator(tick_locations))
+ax2.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
 ax2.set_title('Market Sales')
 ax3.plot([i.strftime('%b') for i in rev_category_line.index], rev_category_line['Related'])
-ax3.set_yticklabels(['{:,}'.format(int(i)) for i in ax3.get_yticks()])
+tick_locations = ax3.get_yticks()
+ax3.yaxis.set_major_locator(FixedLocator(tick_locations))
+ax3.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
 ax3.set_title('Related Sales')
 
 ax4.table(cellText=[[j[0]] + [f'{i:,.0f}' for i in j if isinstance(i, float)] for j in rev_division.values],
@@ -2143,10 +2159,14 @@ ax4.set_title('Division wise monthly sales')
 ax4.axis('off')
 
 ax5.plot([i.strftime('%b') for i in rev_division_line.index], rev_division_line['Manpower'])
-ax5.set_yticklabels(['{:,}'.format(int(i)) for i in ax5.get_yticks()])
+tick_locations = ax5.get_yticks()
+ax5.yaxis.set_major_locator(FixedLocator(tick_locations))
+ax5.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
 ax5.set_title('Manpower Sales')
 ax6.plot([i.strftime('%b') for i in rev_division_line.index], rev_division_line['Projects'])
-ax6.set_yticklabels(['{:,}'.format(int(i)) for i in ax6.get_yticks()])
+tick_locations = ax6.get_yticks()
+ax6.yaxis.set_major_locator(FixedLocator(tick_locations))
+ax6.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
 ax6.set_title('Projects Sales')
 ax7.pie(x=rev_category_pie_month['Amount'], labels=rev_category_pie_month.index, autopct='%.0f%%', labeldistance=1,
         pctdistance=0.3)
@@ -2186,7 +2206,9 @@ new_or_old.index = [i.strftime('%b') for i in new_or_old.index]
 new_or_old.plot(kind='bar', stacked=True, ax=new_existing)
 new_existing.set_title('Revenue by Existing / New Customers')
 new_existing.legend()
-new_existing.set_yticklabels(['{:,}'.format(int(i)) for i in new_existing.get_yticks()])
+tick_locations = new_existing.get_yticks()
+new_existing.yaxis.set_major_locator(FixedLocator(tick_locations))
+new_existing.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
 
 inv_emp: pd.DataFrame = df_rev['inv_emp']
 demp: pd.DataFrame = dEmployee.copy().reset_index()
@@ -2199,7 +2221,9 @@ inv_emp.index = [i.strftime('%b') for i in inv_emp.index]
 inv_emp.plot(kind='bar', stacked=True, ax=salesman_wise)
 salesman_wise.set_title('Revenue by Sales Person')
 salesman_wise.legend(loc='best')
-salesman_wise.set_yticklabels(['{:,}'.format(int(i)) for i in salesman_wise.get_yticks()])
+tick_locations = salesman_wise.get_yticks()
+salesman_wise.yaxis.set_major_locator(FixedLocator(tick_locations))
+salesman_wise.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
 
 monthly_collection: pd.DataFrame = collection(dCustomers=dCustomers, end_date=end_date, fGL=fGL,
                                               fCollection=fCollection)
@@ -2208,7 +2232,9 @@ col_graph.plot([i.strftime('%b') for i in monthly_collection['Due Date']], month
                label='Target')
 col_graph.plot([i.strftime('%b') for i in monthly_collection['Due Date']], monthly_collection['Actual'],
                label='Actual')
-col_graph.set_yticklabels(['{:,}'.format(int(i)) for i in col_graph.get_yticks()])
+tick_locations = col_graph.get_yticks()
+col_graph.yaxis.set_major_locator(FixedLocator(tick_locations))
+col_graph.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
 col_graph.legend()
 
 buf_sales = BytesIO()
@@ -2249,13 +2275,14 @@ document.add_page_break()
 for customer in customer_list:
     cus_code: list = dCustomers.loc[(dCustomers['Cus_Name'] == customer), 'Customer_Code'].tolist()
     table_title = document.add_table(rows=1, cols=2)
+    table_title.columns[0].width = Cm(12)
     r0c0 = table_title.cell(0,0)
     cy_cp_pl_company_title = r0c0.add_paragraph().add_run(customer.upper())
     apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
     r0c1 =  table_title.cell(0,1)
     cust_logo = r0c1.add_paragraph().add_run()
     try:
-        logo = cust_logo.add_picture(f'{CUST_LOGO_PATH}\{cus_code[0]}.png', width=Inches(1.5),height=Inches(1.89))
+        logo = cust_logo.add_picture(f'{CUST_LOGO_PATH}\{cus_code[0]}.png', width=Inches(0.79),height=Inches(1))
         logo = document.paragraphs[-1]
         logo.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     except FileNotFoundError:
@@ -2366,7 +2393,9 @@ for customer in customer_list:
                   colLabels=monthly_rev.columns, cellLoc='center', loc='center')
     rev_tbl.axis('off')
     rev_bar.bar([i.strftime('%b') for i in monthly_rev['Month']], monthly_rev['Amount'])
-    rev_bar.set_yticklabels(['{:,}'.format(int(i)) for i in rev_bar.get_yticks()])
+    tick_locations = rev_bar.get_yticks()
+    rev_bar.yaxis.set_major_locator(FixedLocator(tick_locations))
+    rev_bar.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
 
     buf = BytesIO()
     plt.tight_layout()
@@ -2650,7 +2679,9 @@ for xy in zip([i.strftime('%b') for i in ops_data.index],ops_data['Transport'].t
 cost_line.plot([i.strftime('%b') for i in ops_data.index], ops_data['Accommodation'], label='Accommodation')
 for xy in zip([i.strftime('%b') for i in ops_data.index],ops_data['Accommodation'].tolist()):
     cost_line.annotate('{:,}K'.format(int(xy[1]/1_000)) ,xy=xy)
-cost_line.set_yticklabels(['{:,}'.format(int(i)) for i in cost_line.get_yticks()])
+tick_locations = cost_line.get_yticks()
+cost_line.yaxis.set_major_locator(FixedLocator(tick_locations))
+cost_line.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
 cost_line.legend()
 
 ph_line.set_title('Transportation and Accommodation Per Head')
@@ -2658,7 +2689,9 @@ ph_line.plot([i.strftime('%b') for i in ops_data.index], (ops_data['Transport'] 
              label='Transport')
 ph_line.plot([i.strftime('%b') for i in ops_data.index], (ops_data['Accommodation'] / ops_data['acco_md']) * 30,
              label='Accommodation')
-ph_line.set_yticklabels(['{:,}'.format(int(i)) for i in ph_line.get_yticks()])
+tick_locations = ph_line.get_yticks()
+ph_line.yaxis.set_major_locator(FixedLocator(tick_locations))
+ph_line.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
 ph_line.legend()
 
 ops_graph_1_buf = BytesIO()
@@ -2674,13 +2707,18 @@ fig_ops_2, (bill_nonbil, efficiency,non_billable) = plt.subplots(nrows=3, ncols=
 bill_nonbil.set_title('Billable Vs Non-Billable Mandays')
 bill_nonbil.plot([i.strftime('%b') for i in ops_data.index], ops_data['productive_md'], label='Productive')
 bill_nonbil.plot([i.strftime('%b') for i in ops_data.index], ops_data['unproductive_md'], label='Un-productive')
-bill_nonbil.set_yticklabels(['{:,}'.format(int(i)) for i in bill_nonbil.get_yticks()])
+tick_locations = bill_nonbil.get_yticks()
+bill_nonbil.yaxis.set_major_locator(FixedLocator(tick_locations))
+bill_nonbil.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
 bill_nonbil.legend()
 
 efficiency.set_title('Manpower Utilization Efficiency')
+
 efficiency.plot([i.strftime('%b') for i in ops_data.index], (ops_data['productive_md'] / ops_data['acco_md']) * 100,
                 label='Efficiency')
-efficiency.set_yticklabels(['{:,.0f}%'.format(i) for i in efficiency.get_yticks()])
+tick_locations = efficiency.get_yticks()
+efficiency.yaxis.set_major_locator(FixedLocator(tick_locations))
+efficiency.yaxis.set_major_formatter(FixedFormatter(['{:,.0f}'.format(int(i)) for i in tick_locations]))
 efficiency.legend()
 
 
@@ -2702,7 +2740,9 @@ results_df = pd.DataFrame.from_dict(c, orient='index').fillna(0) * -1
 non_billable.set_title('Non-Billable Cost')
 for p in results_df.columns:
     non_billable.plot([i.strftime('%b') for i in results_df.index], results_df[p], label=p)
-non_billable.set_yticklabels(['{:,}'.format(int(i)) for i in non_billable.get_yticks()])
+tick_locations = non_billable.get_yticks()
+non_billable.yaxis.set_major_locator(FixedLocator(tick_locations))
+non_billable.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
 non_billable.legend()
 
 

@@ -102,10 +102,9 @@ def report(ledger:int, df_collection:pd.DataFrame)->float:
         df_collection.to_csv(f'{ledger}.csv')
         return df_collection['Days_Taken'].median()
 
-ledgers = [1020201392] # do not enter has str. 
-for ledger in ledgers:
-    print(report(ledger=ledger,df_collection=df_collection))
-     
+# ledgers = [1020201392] # do not enter has str. 
+# for ledger in ledgers:
+#     print(report(ledger=ledger,df_collection=df_collection))
 
 
 def median_days(row)->float:
@@ -126,5 +125,5 @@ def median_collection_days()->pd.DataFrame:
      return report
 
 
-# collection_days = median_collection_days()
-# collection_days.to_csv('Collection Days.csv',index=False)
+collection_days = median_collection_days()
+collection_days.to_csv('Collection Days.csv',index=False)

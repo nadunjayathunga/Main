@@ -231,9 +231,6 @@ def salary_allocation(job_id: str) -> float:
         allocated_total: float = allocated_clearance + allocated_transport + allocated_freight
         # as there are certain jobs which contain multiple jobs
         total_salary_allocated += allocated_total
-        if job_id in qafco_jobs:
-            print(f'{job_id}:claranceRev:{total_clearance_rev},trptRev:{total_transport_rev},freightRev:{total_freight_rev},clearanceSal:{clearance_salary},trptSal:{transport_salary},freightSal:{freight_salary}')
-            print(f'alloClearanc:{allocated_clearance},alloTrpt:{allocated_transport},alloFre:{allocated_freight}')
     return total_salary_allocated
 
 
@@ -366,10 +363,10 @@ def profitability_overall(emp_ids:list=df_jobs['emp_id'].unique()) -> pd.DataFra
     overall_report.to_csv(f'overall-{str(emp_ids[0])}.csv')
     return overall_report
 
-employees:list = ['NBNL0101','NBNL0085','NBNL0033','NBNL0094']
+employees:list = ['NBNL0088','NBNL0085','NBNL0043','NBNL0094','NBNL0087','NBNL0109','NBNL0000','NBNL0071']
 
-# for employee in employees:
-#     profitability_overall(emp_ids=[employee])
-profitability_overall()
+for employee in employees:
+    profitability_overall(emp_ids=[employee])
+# profitability_overall()
 
 
