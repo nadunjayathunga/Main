@@ -1,23 +1,23 @@
 import os
+import statistics
 from datetime import datetime, timedelta
+from io import BytesIO
+from itertools import islice
 
-import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib.ticker import FixedLocator, FixedFormatter
+import numpy as np
+import pandas as pd
 from dateutil.relativedelta import relativedelta
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.section import WD_ORIENT, WD_SECTION
-from docx.shared import Pt, RGBColor, Cm, Inches
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from docx.shared import Pt, RGBColor, Cm, Inches
 from docx2pdf import convert
-from io import BytesIO
+from matplotlib.ticker import FixedLocator, FixedFormatter
+
 from data import company_data, company_info, doc_styles, table_style, cogs_ledger_map
-import statistics
-import numpy as np
-from itertools import islice
-import sys
 
 
 def data_sources(company_id: int) -> dict:
@@ -42,7 +42,7 @@ def data_sources(company_id: int) -> dict:
                                             usecols=['Third_Level_Group_Name', 'First_Level_Group_Name', 'Ledger_Code',
                                                      'Ledger_Name', 'Second_Level_Group_Name',
                                                      'Fourth_Level_Group_Name'])
-    dCustomers: pd.DataFrame = pd.read_excel(io=path, sheet_name='dCustomers',
+    dCustomer: pd.DataFrame = pd.read_excel(io=path, sheet_name='dCustomer',
                                              usecols=['Customer_Code', 'Ledger_Code', 'Cus_Name', 'Type', 'Credit_Days',
                                                       'Date_Established'])
     fOutSourceInv: pd.DataFrame = pd.read_excel(io=path,
@@ -68,8 +68,8 @@ def data_sources(company_id: int) -> dict:
                                               dtype={'Payment Voucher Number': 'str'})
     dCusOrder: pd.DataFrame = pd.read_excel(io=path, usecols=['Order_ID', 'Customer_Code', 'Employee_Code'],
                                             sheet_name='dCusOrder')
-    dContracts: pd.DataFrame = pd.read_excel(io=path, usecols=['Order_ID', 'Customer_Code', 'Employee_Code'],
-                                             sheet_name='dContracts')
+    dContract: pd.DataFrame = pd.read_excel(io=path, usecols=['Order_ID', 'Customer_Code', 'Employee_Code'],
+                                             sheet_name='dContract')
     dOrderAMC: pd.DataFrame = pd.read_excel(io=path, usecols=['Order_ID', 'Customer_Code', 'Employee_Code'],
                                             sheet_name='dOrderAMC')
     fTimesheet: pd.DataFrame = pd.read_excel(io=path, sheet_name='fTimesheet',
@@ -81,8 +81,8 @@ def data_sources(company_id: int) -> dict:
                                       engine='calamine')
     dExclude: pd.DataFrame = pd.read_excel(sheet_name='dExclude', io=path)
     return {'fGL': fGL, 'dEmployee': dEmployee, 'dCoAAdler': dCoAAdler, 'fOutSourceInv': fOutSourceInv,
-            'fAMCInv': fAMCInv, 'fProInv': fProInv, 'fCreditNote': fCreditNote, 'dCustomers': dCustomers,
-            'fBudget': fBudget, 'fCollection': fCollection, 'dContracts': dContracts, 'dCusOrder': dCusOrder,
+            'fAMCInv': fAMCInv, 'fProInv': fProInv, 'fCreditNote': fCreditNote, 'dCustomer': dCustomer,
+            'fBudget': fBudget, 'fCollection': fCollection, 'dContract': dContract, 'dCusOrder': dCusOrder,
             'dOrderAMC': dOrderAMC, 'fTimesheet': fTimesheet, 'fOT': fOT, 'dExclude': dExclude}
 
 
@@ -186,10 +186,10 @@ def preprocessing(data: dict) -> dict:
     fAMCInv: pd.DataFrame = data['fAMCInv']
     fProInv: pd.DataFrame = data['fProInv']
     fCreditNote: pd.DataFrame = data['fCreditNote']
-    dCustomers: pd.DataFrame = data['dCustomers']
+    dCustomer: pd.DataFrame = data['dCustomer']
     fBudget: pd.DataFrame = data['fBudget']
     fCollection: pd.DataFrame = data['fCollection']
-    dContracts: pd.DataFrame = data['dContracts']
+    dContract: pd.DataFrame = data['dContract']
     dCusOrder: pd.DataFrame = data['dCusOrder']
     dOrderAMC: pd.DataFrame = data['dOrderAMC']
     fTimesheet: pd.DataFrame = data['fTimesheet']
@@ -204,19 +204,19 @@ def preprocessing(data: dict) -> dict:
     fGL['Amount'] = fGL['Credit Amount'] - fGL['Debit Amount']
     fGL.drop(columns=['Credit Amount', 'Debit Amount'], inplace=True)
     fGL.loc[:, 'Voucher Date'] = fGL['Voucher Date'] + pd.offsets.MonthEnd(0)
-    dContracts['Order_ID'] = dContracts['Order_ID'].str.split('-', expand=True)[0]
+    dContract['Order_ID'] = dContract['Order_ID'].str.split('-', expand=True)[0]
     fOutSourceInv = pd.merge(
-        left=fOutSourceInv, right=dCustomers, on='Customer_Code', how='left')
-    fAMCInv = pd.merge(left=fAMCInv, right=dCustomers,
+        left=fOutSourceInv, right=dCustomer, on='Customer_Code', how='left')
+    fAMCInv = pd.merge(left=fAMCInv, right=dCustomer,
                        on='Customer_Code', how='left')
-    fProInv = pd.merge(left=fProInv, right=dCustomers,
+    fProInv = pd.merge(left=fProInv, right=dCustomer,
                        on='Customer_Code', how='left')
     fCreditNote['Net_Amount'] = fCreditNote['Net_Amount'] * -1
     fCreditNote = pd.merge(
-        left=fCreditNote, right=dCustomers, on='Ledger_Code', how='left')
+        left=fCreditNote, right=dCustomer, on='Ledger_Code', how='left')
     fInvoices: pd.DataFrame = pd.concat(
         [fOutSourceInv, fAMCInv, fProInv, fCreditNote])
-    dJobs: pd.DataFrame = pd.concat([dContracts, dCusOrder, dOrderAMC], ignore_index=True)
+    dJobs: pd.DataFrame = pd.concat([dContract, dCusOrder, dOrderAMC], ignore_index=True)
     fInvoices = pd.merge(left=fInvoices, right=dJobs[['Order_ID', 'Employee_Code']], on='Order_ID',
                          how='left').sort_values(by='Invoice_Date', ascending=True)
     fInvoices['Invoice_Date'] = fInvoices['Invoice_Date'].apply(lambda row: row + relativedelta(day=31))
@@ -238,9 +238,9 @@ def preprocessing(data: dict) -> dict:
     fOT.loc[:, 'net'] = fOT['net'] * -1
     fTimesheet = fTimesheet.loc[~fTimesheet['job_id'].isin(['discharged', 'not_joined'])]
     fTimesheet.loc[:, 'v_date'] = fTimesheet['v_date'] + pd.offsets.MonthEnd(0)
-    dEmployee['travel_cost'].fillna(0,inplace=True)
+    dEmployee.loc[:, 'travel_cost'] = dEmployee['travel_cost'].fillna(0, inplace=True)
     return {'fGL': fGL, 'dEmployee': dEmployee, 'dCoAAdler': dCoAAdler, 'fInvoices': fInvoices, 'fBudget': fBudget,
-            'dCustomers': dCustomers, 'fCollection': fCollection, 'dJobs': dJobs, 'fTimesheet': fTimesheet, 'fOT': fOT,
+            'dCustomer': dCustomer, 'fCollection': fCollection, 'dJobs': dJobs, 'fTimesheet': fTimesheet, 'fOT': fOT,
             'dExclude': dExclude}
 
 
@@ -902,8 +902,8 @@ def settlement_days(invoices: list) -> int:
 
 
 def cust_ageing(customer: str) -> pd.DataFrame:
-    ledgers: list = dCustomers.loc[(dCustomers['Cus_Name'] == customer), 'Ledger_Code'].tolist()
-    credit_days: int = int(dCustomers.loc[dCustomers['Cus_Name'].isin([customer]), 'Credit_Days'].iloc[0])
+    ledgers: list = dCustomer.loc[(dCustomer['Cus_Name'] == customer), 'Ledger_Code'].tolist()
+    credit_days: int = int(dCustomer.loc[dCustomer['Cus_Name'].isin([customer]), 'Credit_Days'].iloc[0])
     invoices: np.ndarray = fCollection.loc[fCollection['ledger_code'].isin(ledgers), 'invoice_number'].unique()
     cust_soa: pd.DataFrame = fCollection.loc[(fCollection['invoice_number'].isin(invoices)), ['invoice_date',
                                                                                               'invoice_amount',
@@ -986,7 +986,7 @@ def customer_ratios(customers: list, fInvoices: pd.DataFrame, end_date: datetime
                                                                                        day=1)), 'Net_Amount'].sum()
         collection_median: float = "Not Collected" if last_receipt_dt == "Not Collected" else settlement_days(
             invoices=cust_invoices)
-        credit_days: int = dCustomer.loc[dCustomers['Cus_Name'].isin([customer]), 'Credit_Days'].iloc[0]
+        credit_days: int = dCustomer.loc[dCustomer['Cus_Name'].isin([customer]), 'Credit_Days'].iloc[0]
         date_established: datetime = dCustomer.loc[dCustomer['Cus_Name'].isin([customer]), 'Date_Established'].iloc[0]
         outstanding_bal: float = fGL.loc[
             (fGL['Ledger_Code'].isin(dCustomer.loc[dCustomer['Cus_Name'].isin([customer]), 'Ledger_Code'].tolist())) & (
@@ -1131,7 +1131,7 @@ def revenue(end_date: datetime, data: pd.DataFrame, fInvoices: pd.DataFrame) -> 
     return {'rev_division': rev_division, 'rev_category': rev_category, 'new_or_old': new_or_old, 'inv_emp': inv_emp}
 
 
-def closing_date(row, dCustomers: pd.DataFrame) -> datetime:
+def closing_date(row, dCustomer: pd.DataFrame) -> datetime:
     """Add credit period (in days) to the voucher date and convert that date to end of the month
 
     Args:
@@ -1142,8 +1142,8 @@ def closing_date(row, dCustomers: pd.DataFrame) -> datetime:
     """
     ledger_code: int = row['Ledger_Code']
 
-    if ledger_code in dCustomers['Ledger_Code'].tolist():
-        credit_days: int = int(dCustomers.loc[dCustomers['Ledger_Code'] == ledger_code, 'Credit_Days'].iloc[0])
+    if ledger_code in dCustomer['Ledger_Code'].tolist():
+        credit_days: int = int(dCustomer.loc[dCustomer['Ledger_Code'] == ledger_code, 'Credit_Days'].iloc[0])
         due_date = row['Voucher Date'] + timedelta(days=credit_days)
         return due_date + relativedelta(day=31)
     else:
@@ -1167,7 +1167,7 @@ def already_collected(row, fGL: pd.DataFrame, fCollection: pd.DataFrame) -> floa
 
     fGL = fGL.loc[(fGL['Transaction Type'].isin(VOUCHER_TYPES)) & (fGL['Ledger_Code'] >= 1000000000) & (
             fGL['Ledger_Code'] <= 1999999999)]
-    fGL['Due Date'] = fGL.apply(closing_date, axis=1, args=[dCustomers])
+    fGL['Due Date'] = fGL.apply(closing_date, axis=1, args=[dCustomer])
     start_date: datetime = row['Due Date'].replace(day=1)
     due_inv_list: list = fGL.loc[
         (fGL['Due Date'] >= start_date) & (fGL['Due Date'] <= row['Due Date']), 'Voucher Number'].unique()
@@ -1177,7 +1177,7 @@ def already_collected(row, fGL: pd.DataFrame, fCollection: pd.DataFrame) -> floa
 
 
 def collection(fCollection: pd.DataFrame, end_date: datetime, fGL: pd.DataFrame,
-               dCustomers: pd.DataFrame) -> pd.DataFrame:
+               dCustomer: pd.DataFrame) -> pd.DataFrame:
     start_date: datetime = datetime(year=end_date.year, month=1, day=1)
     # filters the collection date based on the selection
     fCollection1 = fCollection.loc[
@@ -1196,7 +1196,7 @@ def collection(fCollection: pd.DataFrame, end_date: datetime, fGL: pd.DataFrame,
     fGL1 = fGL1.loc[(fGL1['Transaction Type'].isin(VOUCHER_TYPES)) & (fGL1['Ledger_Code'] >= 1000000000) & (
             fGL1['Ledger_Code'] <= 1999999999)]
     fGL1.loc[:, 'Amount'] = fGL1['Amount'] * -1
-    fGL1.loc[:, 'Due Date'] = fGL1.apply(closing_date, axis=1, args=[dCustomers])
+    fGL1.loc[:, 'Due Date'] = fGL1.apply(closing_date, axis=1, args=[dCustomer])
     fGL1 = fGL1.loc[(fGL1['Due Date'] >= start_date) & (fGL1['Due Date'] <= end_date)]
     fGL1 = fGL1.groupby(by=['Due Date'], as_index=False)['Amount'].sum()
     fGL1.loc[:, 'Already_Collected'] = fGL1.apply(already_collected, axis=1, args=[fGL, fCollection])
@@ -1402,7 +1402,7 @@ def employee_related(data: pd.DataFrame) -> dict:
     return employee_data
 
 
-def operations(ftimesheet: pd.DataFrame, financial: pd.DataFrame, end_date: datetime,dExclude:pd.DataFrame) -> dict:
+def operations(ftimesheet: pd.DataFrame, financial: pd.DataFrame, end_date: datetime, dExclude: pd.DataFrame) -> dict:
     start_date: datetime = datetime(year=end_date.year, month=1, day=1)
 
     ftimesheet: pd.DataFrame = ftimesheet.loc[
@@ -1413,8 +1413,9 @@ def operations(ftimesheet: pd.DataFrame, financial: pd.DataFrame, end_date: date
     df_accommodation: pd.DataFrame = ftimesheet.copy()
     df_unproductive: pd.DataFrame = ftimesheet.copy()
     df_transport = df_transport.loc[
-        ~df_transport['job_id'].isin(dExclude.loc[dExclude['dc_trpt']==True,'job_type'].tolist())]
-    df_unproductive = df_unproductive.loc[df_unproductive['job_id'].isin(dExclude.loc[dExclude['dc_emp_beni']==False,'job_type'].tolist())]
+        ~df_transport['job_id'].isin(dExclude.loc[dExclude['dc_trpt'] == True, 'job_type'].tolist())]
+    df_unproductive = df_unproductive.loc[
+        df_unproductive['job_id'].isin(dExclude.loc[dExclude['dc_emp_beni'] == False, 'job_type'].tolist())]
 
     df_transport = df_transport.groupby(by=['v_date'])['cost_center'].count().reset_index().rename(
         columns={'cost_center': 'trpt_md'})
@@ -1481,98 +1482,123 @@ def cell_background(table, row: int, column: list, original: float, compare: flo
             table_cell_properties.append(shade_obj)
 
 
-def job_profitability(fTimesheet:pd.DataFrame,fGL:pd.DataFrame,end_date:datetime,dEmployee:pd.DataFrame,dExclude:pd.DataFrame,fOT:pd.DataFrame,fInvoices:pd.DataFrame,cogs_map:dict,dJobs:pd.DataFrame)->pd.DataFrame:
-
-    start_date:datetime = datetime(year=end_date.year,month=1,day=1)
-    periods :list =  pd.date_range(start=start_date, end=end_date, freq='ME').to_pydatetime().tolist()
-    fGL = fGL.loc[:,['Cost Center','Voucher Date','Ledger_Code','Amount','Third_Level_Group_Name','Second_Level_Group_Name']]
-    fGL = fGL.loc[~fGL['Ledger_Code'].isin([5010101002,5010101003])]
-    emp_list_full :list = dEmployee.index.tolist()
-    driversandcleaners:list = dEmployee.loc[dEmployee['Designation'].isin(['HEAVY DRIVER','DRIVER','CAMP SUPERVISOR'])].index.tolist()
-    emp_list :list = [i for i in emp_list_full if i not in driversandcleaners]
-    timesheet_sum :dict = {'dc_emp_beni':None,'dc_trpt':None,'dc_out':None,'dc_sal':None}
-    timesheet_jobs :dict = {'dc_emp_beni':None,'dc_trpt':None,'dc_out':None,'dc_sal':None}
-    timesheet_grand_sum :dict = {'dc_emp_beni':None,'dc_trpt':None,'dc_out':None,'dc_sal':None}
-    periodic_allocation :dict = {}
+def job_profitability(fTimesheet: pd.DataFrame, fGL: pd.DataFrame, end_date: datetime, dEmployee: pd.DataFrame,
+                      dExclude: pd.DataFrame, fOT: pd.DataFrame, fInvoices: pd.DataFrame, cogs_map: dict,
+                      dJobs: pd.DataFrame) -> pd.DataFrame:
+    start_date: datetime = datetime(year=end_date.year, month=1, day=1)
+    periods: list = pd.date_range(start=start_date, end=end_date, freq='ME').to_pydatetime().tolist()
+    fGL = fGL.loc[:,
+          ['Cost Center', 'Voucher Date', 'Ledger_Code', 'Amount', 'Third_Level_Group_Name', 'Second_Level_Group_Name']]
+    fGL = fGL.loc[~fGL['Ledger_Code'].isin([5010101002, 5010101003])]
+    emp_list_full: list = dEmployee.index.tolist()
+    driversandcleaners: list = dEmployee.loc[
+        dEmployee['Designation'].isin(['HEAVY DRIVER', 'DRIVER', 'CAMP SUPERVISOR'])].index.tolist()
+    emp_list: list = [i for i in emp_list_full if i not in driversandcleaners]
+    timesheet_sum: dict = {'dc_emp_beni': None, 'dc_trpt': None, 'dc_out': None, 'dc_sal': None}
+    timesheet_jobs: dict = {'dc_emp_beni': None, 'dc_trpt': None, 'dc_out': None, 'dc_sal': None}
+    timesheet_grand_sum: dict = {'dc_emp_beni': None, 'dc_trpt': None, 'dc_out': None, 'dc_sal': None}
+    periodic_allocation: dict = {}
 
     for period in periods:
-        st_date :datetime = period + relativedelta(day=1)
-        fGL_fitlered :pd.DataFrame = fGL.loc[(fGL['Voucher Date']>=st_date) & (fGL['Voucher Date']<=period) & 
-                    (fGL['Second_Level_Group_Name'] == 'Manpower Cost') ,['Cost Center','Voucher Date','Ledger_Code','Amount']]
-        fGL_emp :pd.DataFrame = fGL_fitlered.loc[fGL_fitlered['Cost Center'].isin(emp_list)]
-        fGL_other :pd.DataFrame = fGL_fitlered.loc[~fGL_fitlered['Cost Center'].isin(emp_list),['Amount','Ledger_Code']].groupby('Ledger_Code',as_index=False)['Amount'].sum()
-        fGL_emp = fGL_emp.groupby(by=['Cost Center','Voucher Date','Ledger_Code'],as_index=False)['Amount'].sum()
-        fGL_emp = fGL_emp.loc[fGL_emp['Amount']!=0]
+        st_date: datetime = period + relativedelta(day=1)
+        fGL_fitlered: pd.DataFrame = fGL.loc[(fGL['Voucher Date'] >= st_date) & (fGL['Voucher Date'] <= period) &
+                                             (fGL['Second_Level_Group_Name'] == 'Manpower Cost'), ['Cost Center',
+                                                                                                   'Voucher Date',
+                                                                                                   'Ledger_Code',
+                                                                                                   'Amount']]
+        fGL_emp: pd.DataFrame = fGL_fitlered.loc[fGL_fitlered['Cost Center'].isin(emp_list)]
+        fGL_other: pd.DataFrame = \
+        fGL_fitlered.loc[~fGL_fitlered['Cost Center'].isin(emp_list), ['Amount', 'Ledger_Code']].groupby('Ledger_Code',
+                                                                                                         as_index=False)[
+            'Amount'].sum()
+        fGL_emp = fGL_emp.groupby(by=['Cost Center', 'Voucher Date', 'Ledger_Code'], as_index=False)['Amount'].sum()
+        fGL_emp = fGL_emp.loc[fGL_emp['Amount'] != 0]
         # TODO You may group this to cogs map using the ledger code. to be fixed. it will reduce the no of iteretion by approx 12.5%
-        fTimesheet_filtered :pd.DataFrame = fTimesheet.loc[(fTimesheet['v_date'] >= st_date) & (fTimesheet['v_date']<=period)]
-        fTimesheet_filtered = fTimesheet_filtered.groupby(['cost_center', 'job_id', 'v_date']).size().reset_index(name='count')
-        billable_jobs:list = fTimesheet_filtered.loc[fTimesheet_filtered['job_id'].str.contains('ESS/CTR'),'job_id'].unique().tolist()
-        
+        fTimesheet_filtered: pd.DataFrame = fTimesheet.loc[
+            (fTimesheet['v_date'] >= st_date) & (fTimesheet['v_date'] <= period)]
+        fTimesheet_filtered = fTimesheet_filtered.groupby(['cost_center', 'job_id', 'v_date']).size().reset_index(
+            name='count')
+        billable_jobs: list = fTimesheet_filtered.loc[
+            fTimesheet_filtered['job_id'].str.contains('ESS/CTR'), 'job_id'].unique().tolist()
+
         for c in dExclude.columns:
-            if c not in ['job_type','group']:
-                valid_jobs :list = dExclude.loc[dExclude[c]==False]['job_type'].tolist() + billable_jobs
-                timesheet_sum[c]  = fTimesheet_filtered.loc[fTimesheet_filtered['job_id'].isin(valid_jobs)].groupby(['cost_center','v_date'],as_index=False)['count'].sum()
+            if c not in ['job_type', 'group']:
+                valid_jobs: list = dExclude.loc[dExclude[c] == False]['job_type'].tolist() + billable_jobs
+                timesheet_sum[c] = fTimesheet_filtered.loc[fTimesheet_filtered['job_id'].isin(valid_jobs)].groupby(
+                    ['cost_center', 'v_date'], as_index=False)['count'].sum()
                 timesheet_jobs[c] = fTimesheet_filtered.loc[fTimesheet_filtered['job_id'].isin(valid_jobs)]
-                timesheet_grand_sum[c]  = timesheet_sum[c]['count'].sum()
-        allocation_dict :dict = {}
-        unallocated_amount :float = 0
-        for _,i in fGL_emp.iterrows():
-            df_type :str = [(k,v) for k,v in cogs_map.items() if i['Ledger_Code'] in v][0][0]
+                timesheet_grand_sum[c] = timesheet_sum[c]['count'].sum()
+        allocation_dict: dict = {}
+        unallocated_amount: float = 0
+        for _, i in fGL_emp.iterrows():
+            df_type: str = [(k, v) for k, v in cogs_map.items() if i['Ledger_Code'] in v][0][0]
             # TODO (a) YOU MAY FILTER df_sum/timesheet_sum and timesheet_detailed/timesheet_jobs only for those cost_centers apperiring in fGL_Emp. which will reduce the number of iterations.
             # Also filter by the ledger as well 
-            df_sum :pd.DataFrame = timesheet_sum[df_type]
-            timesheet_detailed:pd.DataFrame = timesheet_jobs[df_type]
+            df_sum: pd.DataFrame = timesheet_sum[df_type]
+            timesheet_detailed: pd.DataFrame = timesheet_jobs[df_type]
             try:
-                total_days: int = df_sum.loc[(df_sum['v_date'] == i['Voucher Date']) & (df_sum['cost_center'] == i['Cost Center']),'count'].iloc[0]
-                timesheet_detailed = timesheet_detailed.loc[(timesheet_detailed['v_date']==i['Voucher Date']) & (timesheet_detailed['cost_center'] == i['Cost Center']),['job_id','count']]
+                total_days: int = df_sum.loc[(df_sum['v_date'] == i['Voucher Date']) & (
+                            df_sum['cost_center'] == i['Cost Center']), 'count'].iloc[0]
+                timesheet_detailed = timesheet_detailed.loc[(timesheet_detailed['v_date'] == i['Voucher Date']) & (
+                            timesheet_detailed['cost_center'] == i['Cost Center']), ['job_id', 'count']]
                 allocation_dict_init = {}
-                for _,j in timesheet_detailed.iterrows():
+                for _, j in timesheet_detailed.iterrows():
                     # TODO (a) only those cost centers having a value will return a value from below. 
-                    allocated :float =i['Amount']/total_days * j['count']
-                    allocation_dict_init[j['job_id']] =  allocated
-                allocation_dict = {k: allocation_dict_init.get(k,0) + allocation_dict.get(k,0) for k in set(allocation_dict)|set(allocation_dict_init)}
+                    allocated: float = i['Amount'] / total_days * j['count']
+                    allocation_dict_init[j['job_id']] = allocated
+                allocation_dict = {k: allocation_dict_init.get(k, 0) + allocation_dict.get(k, 0) for k in
+                                   set(allocation_dict) | set(allocation_dict_init)}
             except IndexError:
                 unallocated_amount += i['Amount']
                 allocation_dict['Un-Allocated'] = unallocated_amount
-        fOT_filtered :pd.DataFrame = fOT.loc[(fOT['date'] >= st_date) & (fOT['date']<=period)]
-        fOT_filtered :dict= fOT_filtered.groupby(by='job_id')['net'].sum().to_dict()
-        allocation_dict = {k:allocation_dict.get(k,0) + fOT_filtered.get(k,0) for k in set(allocation_dict)|set(fOT_filtered)}
-        inv_filtered_cust :dict= fInvoices.loc[(fInvoices['Invoice_Date'] >= st_date) & (fInvoices['Invoice_Date']<=period),['Order_ID','Net_Amount']].groupby('Order_ID')['Net_Amount'].sum().to_dict()
-        allocation_dict = {k:allocation_dict.get(k,0) + inv_filtered_cust.get(k,0) for k in set(allocation_dict)|set(inv_filtered_cust)}
+        fOT_filtered: pd.DataFrame = fOT.loc[(fOT['date'] >= st_date) & (fOT['date'] <= period)]
+        fOT_filtered: dict = fOT_filtered.groupby(by='job_id')['net'].sum().to_dict()
+        allocation_dict = {k: allocation_dict.get(k, 0) + fOT_filtered.get(k, 0) for k in
+                           set(allocation_dict) | set(fOT_filtered)}
+        inv_filtered_cust: dict = fInvoices.loc[
+            (fInvoices['Invoice_Date'] >= st_date) & (fInvoices['Invoice_Date'] <= period), ['Order_ID',
+                                                                                             'Net_Amount']].groupby(
+            'Order_ID')['Net_Amount'].sum().to_dict()
+        allocation_dict = {k: allocation_dict.get(k, 0) + inv_filtered_cust.get(k, 0) for k in
+                           set(allocation_dict) | set(inv_filtered_cust)}
         for i in cogs_map:
-            z:float = fGL_other.loc[fGL_other['Ledger_Code'].isin(cogs_map[i])]['Amount'].sum()
+            z: float = fGL_other.loc[fGL_other['Ledger_Code'].isin(cogs_map[i])]['Amount'].sum()
             if z != 0:
-                for _,row in timesheet_jobs[i].groupby(by='job_id',as_index=False)['count'].sum().iterrows():
-                    overhead_allocation :dict ={}
-                    value:float = z / timesheet_grand_sum[i] * row['count']
+                for _, row in timesheet_jobs[i].groupby(by='job_id', as_index=False)['count'].sum().iterrows():
+                    overhead_allocation: dict = {}
+                    value: float = z / timesheet_grand_sum[i] * row['count']
                     overhead_allocation[row['job_id']] = value
-                    allocation_dict = {k:allocation_dict.get(k,0) + overhead_allocation.get(k,0) for k in set(allocation_dict)|set(overhead_allocation)}
-        acc_types :list = dExclude.loc[dExclude['group'].isin(['Accommodation']),'job_type'].tolist()
-        accommodation_cost :float = sum([v for k,v in allocation_dict.items() if k in acc_types])
-        non_accomo_sum :int = fTimesheet_filtered.loc[~fTimesheet_filtered['job_id'].isin(acc_types)]['count'].sum()
-        non_accomo :pd.DataFrame = fTimesheet_filtered.loc[~fTimesheet_filtered['job_id'].isin(acc_types)]
-        for _,row in non_accomo.iterrows():
-            accommodation_allocation :dict = {}
-            value :float = accommodation_cost/non_accomo_sum * row['count']
+                    allocation_dict = {k: allocation_dict.get(k, 0) + overhead_allocation.get(k, 0) for k in
+                                       set(allocation_dict) | set(overhead_allocation)}
+        acc_types: list = dExclude.loc[dExclude['group'].isin(['Accommodation']), 'job_type'].tolist()
+        accommodation_cost: float = sum([v for k, v in allocation_dict.items() if k in acc_types])
+        non_accomo_sum: int = fTimesheet_filtered.loc[~fTimesheet_filtered['job_id'].isin(acc_types)]['count'].sum()
+        non_accomo: pd.DataFrame = fTimesheet_filtered.loc[~fTimesheet_filtered['job_id'].isin(acc_types)]
+        for _, row in non_accomo.iterrows():
+            accommodation_allocation: dict = {}
+            value: float = accommodation_cost / non_accomo_sum * row['count']
             accommodation_allocation[row['job_id']] = value
-            allocation_dict = {k:allocation_dict.get(k,0) + accommodation_allocation.get(k,0) for k in set(allocation_dict)|set(accommodation_allocation)}
+            allocation_dict = {k: allocation_dict.get(k, 0) + accommodation_allocation.get(k, 0) for k in
+                               set(allocation_dict) | set(accommodation_allocation)}
         del allocation_dict['AC-ACCOMODATION']
         del allocation_dict['AC']
         periodic_allocation[period] = allocation_dict
 
-
-    cy_cp:pd.DataFrame = pd.DataFrame(list(periodic_allocation[end_date].items()),columns=['Order_ID','Amount'])
-    cy_cp = pd.merge(left=cy_cp,right=dJobs[['Order_ID','Customer_Code','Employee_Code']],on='Order_ID',how='left')
-    cy_cp_cus :pd.DataFrame = cy_cp.groupby(by='Customer_Code',as_index=False)['Amount'].sum()
-    cy_cp_emp :pd.DataFrame= cy_cp.groupby(by='Employee_Code',as_index=False)['Amount'].sum()
-    cy_ytd:pd.DataFrame = pd.DataFrame()
+    cy_cp: pd.DataFrame = pd.DataFrame(list(periodic_allocation[end_date].items()), columns=['Order_ID', 'Amount'])
+    cy_cp = pd.merge(left=cy_cp, right=dJobs[['Order_ID', 'Customer_Code', 'Employee_Code']], on='Order_ID', how='left')
+    cy_cp_cus: pd.DataFrame = cy_cp.groupby(by='Customer_Code', as_index=False)['Amount'].sum()
+    cy_cp_emp: pd.DataFrame = cy_cp.groupby(by='Employee_Code', as_index=False)['Amount'].sum()
+    cy_ytd: pd.DataFrame = pd.DataFrame()
     for period in periods:
-        month_df :pd.DataFrame = pd.DataFrame(list(periodic_allocation[period].items()),columns=['Order_ID','Amount'])
-        cy_ytd = pd.concat([month_df,cy_ytd])
-    cy_ytd = pd.merge(left=cy_ytd,right=dJobs[['Order_ID','Customer_Code','Employee_Code']],on='Order_ID',how='left')
-    cy_ytd_cus:pd.DataFrame = cy_ytd.groupby(by='Customer_Code',as_index=False)['Amount'].sum()
-    cy_ytd_emp:pd.DataFrame = cy_ytd.groupby(by='Employee_Code',as_index=False)['Amount'].sum()
-    return {'periodic_allocation':periodic_allocation,'cy_cp_cus':cy_cp_cus,'cy_ytd_cus':cy_ytd_cus,'cy_cp_emp':cy_cp_emp,'cy_ytd_emp':cy_ytd_emp}
+        month_df: pd.DataFrame = pd.DataFrame(list(periodic_allocation[period].items()), columns=['Order_ID', 'Amount'])
+        cy_ytd = pd.concat([month_df, cy_ytd])
+    cy_ytd = pd.merge(left=cy_ytd, right=dJobs[['Order_ID', 'Customer_Code', 'Employee_Code']], on='Order_ID',
+                      how='left')
+    cy_ytd_cus: pd.DataFrame = cy_ytd.groupby(by='Customer_Code', as_index=False)['Amount'].sum()
+    cy_ytd_emp: pd.DataFrame = cy_ytd.groupby(by='Employee_Code', as_index=False)['Amount'].sum()
+    return {'periodic_allocation': periodic_allocation, 'cy_cp_cus': cy_cp_cus, 'cy_ytd_cus': cy_ytd_cus,
+            'cy_cp_emp': cy_cp_emp, 'cy_ytd_emp': cy_ytd_emp}
+
 
 company_id = 0
 end_date: datetime = datetime(year=2024, month=8, day=31)
@@ -1591,12 +1617,11 @@ merged: pd.DataFrame = pd.merge(
 fInvoices: pd.DataFrame = cleaned_data['fInvoices']
 fBudget: pd.DataFrame = cleaned_data['fBudget']
 fCollection: pd.DataFrame = cleaned_data['fCollection']
-dCustomers: pd.DataFrame = cleaned_data['dCustomers']
+dCustomer: pd.DataFrame = cleaned_data['dCustomer']
 dJobs: pd.DataFrame = cleaned_data['dJobs']
 fTimesheet: pd.DataFrame = cleaned_data['fTimesheet']
 fOT: pd.DataFrame = cleaned_data['fOT']
 dExclude: pd.DataFrame = cleaned_data['dExclude']
-
 
 profitability: dict = job_profitability(fTimesheet=fTimesheet, fGL=merged, end_date=end_date, dEmployee=dEmployee,
                                         dExclude=dExclude, fOT=fOT, fInvoices=fInvoices, cogs_map=cogs_ledger_map,
@@ -1778,21 +1803,27 @@ table_formatter(table_name=tbl_ytd_basic, style_name='table_style_1', special=pl
 document.add_page_break()
 
 plt.style.use('ggplot')
-fig_pl, (ax1, ax2) = plt.subplots(nrows=2, ncols=1,figsize = (7.27,10))
+fig_pl, (ax1, ax2) = plt.subplots(nrows=2, ncols=1, figsize=(7.27, 10))
 
 ratiopl: pd.DataFrame = ratios_pandl['gp']['cy_ytd_basic_monthwise']
 ax1.set_title(f'GP Vs NP VS EBITDA - {end_date.year}')
 ax1.plot([i.strftime('%b') for i in ratiopl['Voucher Date']],
          (ratiopl['Gross Profit'] / ratiopl['Total Revenue'] * 100),
          label='GP')
+for xy in zip([i.strftime('%b') for i in ratiopl['Voucher Date']],
+              (ratiopl['Gross Profit'] / ratiopl['Total Revenue'] * 100).tolist()):
+    ax1.annotate('{:,.0f}%'.format(xy[1]), xy=xy)
 ax1.plot([i.strftime('%b') for i in ratiopl['Voucher Date']], (ratiopl['EBITDA'] / ratiopl['Total Revenue'] * 100),
          label='EBITDA')
 ax1.plot([i.strftime('%b') for i in ratiopl['Voucher Date']], (ratiopl['Net Profit'] / ratiopl['Total Revenue'] * 100),
          label='NP')
+for xy in zip([i.strftime('%b') for i in ratiopl['Voucher Date']],
+              (ratiopl['Net Profit'] / ratiopl['Total Revenue'] * 100).tolist()):
+    ax1.annotate('{:,.0f}%'.format(xy[1]), xy=xy)
 
 tick_locations = ax1.get_yticks()
 ax1.yaxis.set_major_locator(FixedLocator(tick_locations))
-ax1.yaxis.set_major_formatter(FixedFormatter(['{:,.0f}'.format(int(i)) for i in tick_locations]))
+ax1.yaxis.set_major_formatter(FixedFormatter(['{:,.0f}%'.format(int(i)) for i in tick_locations]))
 ax1.legend()
 
 ratioplyearly: pd.DataFrame = ratios_pandl['plyearly']
@@ -1800,9 +1831,15 @@ ax2.set_title(f'GP Vs NP VS EBITDA ({sys_cut_off.year}-{end_date.year})')
 ax2.plot([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in ratioplyearly['period']],
          (ratioplyearly['gp'] / ratioplyearly['revenue'] * 100),
          label='GP')
+for xy in zip([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in ratioplyearly['period']],
+              (ratioplyearly['gp'] / ratioplyearly['revenue'] * 100).tolist()):
+    ax2.annotate('{:,.0f}%'.format(xy[1]), xy=xy)
 ax2.plot([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in ratioplyearly['period']],
          (ratioplyearly['ebitda'] / ratioplyearly['revenue'] * 100),
          label='EBITDA')
+for xy in zip([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in ratioplyearly['period']],
+              (ratioplyearly['ebitda'] / ratioplyearly['revenue'] * 100).tolist()):
+    ax2.annotate('{:,.0f}%'.format(xy[1]), xy=xy)
 ax2.plot([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in ratioplyearly['period']],
          (ratioplyearly['np'] / ratioplyearly['revenue'] * 100),
          label='NP')
@@ -1810,7 +1847,7 @@ ax2.plot([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in ratioplyearly
 ax2.invert_xaxis()
 tick_locations = ax2.get_yticks()
 ax2.yaxis.set_major_locator(FixedLocator(tick_locations))
-ax2.yaxis.set_major_formatter(FixedFormatter(['{:,.0f}'.format(int(i)) for i in tick_locations]))
+ax2.yaxis.set_major_formatter(FixedFormatter(['{:,.0f}%'.format(int(i)) for i in tick_locations]))
 ax2.legend()
 
 pl_graph_buf = BytesIO()
@@ -1994,7 +2031,7 @@ rpr_df = pd.concat([rpr_df, rpr_total_row], ignore_index=False)
 
 cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Services W.L.L')
 apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
-rpr_report_title = document.add_paragraph().add_run('Break-up of Related-Party Receiavable')
+rpr_report_title = document.add_paragraph().add_run('Break-up of Related-Party Receivable')
 apply_style_properties(rpr_report_title, style_picker(name='report_title'))
 
 tbl_rpr = document.add_table(rows=1, cols=2)
@@ -2031,25 +2068,34 @@ table_formatter(table_name=tbl_rpp, style_name='table_style_1', special=['Total'
 document.add_page_break()
 
 plt.style.use('ggplot')
-fig_bs, (ax1, ax2, ax3) = plt.subplots(nrows=3, ncols=1, sharex=True,figsize = (7.27,10))
+fig_bs, (ax1, ax2, ax3) = plt.subplots(nrows=3, ncols=1, sharex=True, figsize=(7.27, 10))
 
 bs_ratios_df: pd.DataFrame = bsratios(bsdata=bscombined, pldata=plcombined, periods=financial_periods_bs,
                                       end_date=end_date)
 
 ax1.set_title('Current Ratio')
 ax1.plot([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in bs_ratios_df['period']], bs_ratios_df['cr'])
+for xy in zip([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in bs_ratios_df['period']],
+              bs_ratios_df['cr'].tolist()):
+    ax1.annotate('{:,.1f}'.format(xy[1]), xy=xy)
 tick_locations = ax1.get_yticks()
 ax1.yaxis.set_major_locator(FixedLocator(tick_locations))
-ax1.yaxis.set_major_formatter(FixedFormatter(['{:,.2f}'.format(int(i)) for i in tick_locations]))
+ax1.yaxis.set_major_formatter(FixedFormatter(['{:,.1f}'.format(int(i)) for i in tick_locations]))
 
 ax2.set_title('Assets Turnover Ratio')
 ax2.plot([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in bs_ratios_df['period']], bs_ratios_df['ato'])
+for xy in zip([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in bs_ratios_df['period']],
+              bs_ratios_df['ato'].tolist()):
+    ax2.annotate('{:,.1f}'.format(xy[1]), xy=xy)
 tick_locations = ax2.get_yticks()
 ax2.yaxis.set_major_locator(FixedLocator(tick_locations))
-ax2.yaxis.set_major_formatter(FixedFormatter(['{:,.2f}'.format(int(i)) for i in tick_locations]))
+ax2.yaxis.set_major_formatter(FixedFormatter(['{:,.1f}'.format(int(i)) for i in tick_locations]))
 
 ax3.set_title('Return on Equity')
 ax3.plot([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in bs_ratios_df['period']], bs_ratios_df['roe'])
+for xy in zip([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in bs_ratios_df['period']],
+              bs_ratios_df['roe'].tolist()):
+    ax3.annotate('{:,.0f}%'.format(xy[1]), xy=xy)
 tick_locations = ax3.get_yticks()
 ax3.yaxis.set_major_locator(FixedLocator(tick_locations))
 ax3.yaxis.set_major_formatter(FixedFormatter(['{:,.0f}%'.format(int(i)) for i in tick_locations]))
@@ -2143,12 +2189,12 @@ ax1.axis('off')
 ax2.plot([i.strftime('%b') for i in rev_category_line.index], rev_category_line['Market'])
 tick_locations = ax2.get_yticks()
 ax2.yaxis.set_major_locator(FixedLocator(tick_locations))
-ax2.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
+ax2.yaxis.set_major_formatter(FixedFormatter(['{:.0f}K'.format(i / 1_000) for i in tick_locations]))
 ax2.set_title('Market Sales')
 ax3.plot([i.strftime('%b') for i in rev_category_line.index], rev_category_line['Related'])
 tick_locations = ax3.get_yticks()
 ax3.yaxis.set_major_locator(FixedLocator(tick_locations))
-ax3.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
+ax3.yaxis.set_major_formatter(FixedFormatter(['{:.0f}K'.format(i / 1_000) for i in tick_locations]))
 ax3.set_title('Related Sales')
 
 ax4.table(cellText=[[j[0]] + [f'{i:,.0f}' for i in j if isinstance(i, float)] for j in rev_division.values],
@@ -2161,12 +2207,12 @@ ax4.axis('off')
 ax5.plot([i.strftime('%b') for i in rev_division_line.index], rev_division_line['Manpower'])
 tick_locations = ax5.get_yticks()
 ax5.yaxis.set_major_locator(FixedLocator(tick_locations))
-ax5.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
+ax5.yaxis.set_major_formatter(FixedFormatter(['{:.0f}K'.format(i / 1_000) for i in tick_locations]))
 ax5.set_title('Manpower Sales')
 ax6.plot([i.strftime('%b') for i in rev_division_line.index], rev_division_line['Projects'])
 tick_locations = ax6.get_yticks()
 ax6.yaxis.set_major_locator(FixedLocator(tick_locations))
-ax6.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
+ax6.yaxis.set_major_formatter(FixedFormatter(['{:.0f}K'.format(i / 1_000) for i in tick_locations]))
 ax6.set_title('Projects Sales')
 ax7.pie(x=rev_category_pie_month['Amount'], labels=rev_category_pie_month.index, autopct='%.0f%%', labeldistance=1,
         pctdistance=0.3)
@@ -2208,7 +2254,7 @@ new_existing.set_title('Revenue by Existing / New Customers')
 new_existing.legend()
 tick_locations = new_existing.get_yticks()
 new_existing.yaxis.set_major_locator(FixedLocator(tick_locations))
-new_existing.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
+new_existing.yaxis.set_major_formatter(FixedFormatter(['{:.0f}K'.format(i / 1_000) for i in tick_locations]))
 
 inv_emp: pd.DataFrame = df_rev['inv_emp']
 demp: pd.DataFrame = dEmployee.copy().reset_index()
@@ -2223,9 +2269,9 @@ salesman_wise.set_title('Revenue by Sales Person')
 salesman_wise.legend(loc='best')
 tick_locations = salesman_wise.get_yticks()
 salesman_wise.yaxis.set_major_locator(FixedLocator(tick_locations))
-salesman_wise.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
+salesman_wise.yaxis.set_major_formatter(FixedFormatter(['{:.0f}K'.format(i / 1_000) for i in tick_locations]))
 
-monthly_collection: pd.DataFrame = collection(dCustomers=dCustomers, end_date=end_date, fGL=fGL,
+monthly_collection: pd.DataFrame = collection(dCustomer=dCustomer, end_date=end_date, fGL=fGL,
                                               fCollection=fCollection)
 col_graph.set_title('Target Collection Vs Actual Collection')
 col_graph.plot([i.strftime('%b') for i in monthly_collection['Due Date']], monthly_collection['Target'],
@@ -2234,7 +2280,7 @@ col_graph.plot([i.strftime('%b') for i in monthly_collection['Due Date']], month
                label='Actual')
 tick_locations = col_graph.get_yticks()
 col_graph.yaxis.set_major_locator(FixedLocator(tick_locations))
-col_graph.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
+col_graph.yaxis.set_major_formatter(FixedFormatter(['{:.0f}K'.format(i / 1_000) for i in tick_locations]))
 col_graph.legend()
 
 buf_sales = BytesIO()
@@ -2251,7 +2297,7 @@ customer_list: list = sorted(fInvoices.loc[(fInvoices['Invoice_Date'] >= datetim
                                                                                   month=end_date.month, day=1)) & (
                                                    fInvoices['Invoice_Date'] <= end_date), 'Cus_Name'].unique())
 customer_info: dict = customer_ratios(customers=customer_list, fInvoices=fInvoices, end_date=end_date,
-                                      fCollection=fCollection, dCustomer=dCustomers, dEmployee=dEmployee)
+                                      fCollection=fCollection, dCustomer=dCustomer, dEmployee=dEmployee)
 
 heading_format = {'fontfamily': 'Georgia', 'color': 'k', 'fontweight': 'bold', 'fontsize': 10}
 
@@ -2273,16 +2319,16 @@ table_formatter(table_name=tbl_cust_toc, style_name='table_style_1', special=[])
 document.add_page_break()
 
 for customer in customer_list:
-    cus_code: list = dCustomers.loc[(dCustomers['Cus_Name'] == customer), 'Customer_Code'].tolist()
+    cus_code: list = dCustomer.loc[(dCustomer['Cus_Name'] == customer), 'Customer_Code'].tolist()
     table_title = document.add_table(rows=1, cols=2)
     table_title.columns[0].width = Cm(12)
-    r0c0 = table_title.cell(0,0)
+    r0c0 = table_title.cell(0, 0)
     cy_cp_pl_company_title = r0c0.add_paragraph().add_run(customer.upper())
     apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
-    r0c1 =  table_title.cell(0,1)
+    r0c1 = table_title.cell(0, 1)
     cust_logo = r0c1.add_paragraph().add_run()
     try:
-        logo = cust_logo.add_picture(f'{CUST_LOGO_PATH}\{cus_code[0]}.png', width=Inches(0.79),height=Inches(1))
+        logo = cust_logo.add_picture(f'{CUST_LOGO_PATH}\{cus_code[0]}.png', width=Inches(0.79), height=Inches(1))
         logo = document.paragraphs[-1]
         logo.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     except FileNotFoundError:
@@ -2360,10 +2406,14 @@ for customer in customer_list:
     tbl_cust_gp_th.cells[2].text = 'ROI Month'
     tbl_cust_gp_th.cells[3].text = 'ROI YTD'
     tbl_cust_gp_td = tbl_cust_gp.rows[1]
-    cp_gp_pct = round(cy_cp_profit_cus.loc[cy_cp_profit_cus['Customer_Code'].isin(cus_code), 'Amount'].sum() / customer_info[customer]['cy_cp_rev'] * 100,2)
-    ytd_gp_pct = round(cy_ytd_profit_cus.loc[cy_ytd_profit_cus['Customer_Code'].isin(cus_code), 'Amount'].sum() / customer_info[customer]['cy_ytd_rev'] * 100,2)
-    tbl_cust_gp_td.cells[0].text = f"{number_format(num=cy_cp_profit_cus.loc[cy_cp_profit_cus['Customer_Code'].isin(cus_code), 'Amount'].sum())} | {cp_gp_pct}%"
-    tbl_cust_gp_td.cells[1].text = f"{number_format(num=cy_ytd_profit_cus.loc[cy_ytd_profit_cus['Customer_Code'].isin(cus_code), 'Amount'].sum())} | {ytd_gp_pct}%"
+    cp_gp_pct = round(cy_cp_profit_cus.loc[cy_cp_profit_cus['Customer_Code'].isin(cus_code), 'Amount'].sum() /
+                      customer_info[customer]['cy_cp_rev'] * 100, 2)
+    ytd_gp_pct = round(cy_ytd_profit_cus.loc[cy_ytd_profit_cus['Customer_Code'].isin(cus_code), 'Amount'].sum() /
+                       customer_info[customer]['cy_ytd_rev'] * 100, 2)
+    tbl_cust_gp_td.cells[
+        0].text = f"{number_format(num=cy_cp_profit_cus.loc[cy_cp_profit_cus['Customer_Code'].isin(cus_code), 'Amount'].sum())} | {cp_gp_pct}%"
+    tbl_cust_gp_td.cells[
+        1].text = f"{number_format(num=cy_ytd_profit_cus.loc[cy_ytd_profit_cus['Customer_Code'].isin(cus_code), 'Amount'].sum())} | {ytd_gp_pct}%"
     tbl_cust_gp_td.cells[2].text = str(customer_info[customer]['cy_cp_roi'])
     tbl_cust_gp_td.cells[3].text = str(customer_info[customer]['cy_ytd_roi'])
     table_formatter(table_name=tbl_cust_gp, style_name='table_style_1', special=[])
@@ -2552,7 +2602,7 @@ dec_pp: pd.DataFrame = revenue_change(fInvoices=fInvoices, end_date=end_date, mo
 inc_py: pd.DataFrame = revenue_change(fInvoices=fInvoices, end_date=end_date, mode='pycp', order=True)
 dec_py: pd.DataFrame = revenue_change(fInvoices=fInvoices, end_date=end_date, mode='pycp', order=False)
 
-cus_info_2 = {0: {0: {'name': 'Top 5 Customers with Incresed\nRevenue compared to previous month', 'df': inc_pp},
+cus_info_2 = {0: {0: {'name': 'Top 5 Customers with Increased\nRevenue compared to previous month', 'df': inc_pp},
                   1: {'name': 'Top 5 Customers with Decreased\nRevenue compared to previous month', 'df': dec_pp}},
               1: {0: {'name': '\nTop 5 Customers with Increased\nRevenue compared to previous year', 'df': inc_py},
                   1: {'name': '\nTop 5 Customers with Decreased\nRevenue compared to previous year', 'df': dec_py}}}
@@ -2643,7 +2693,7 @@ hr_graph_2_buf.seek(0)
 doc.add_picture(hr_graph_2_buf)
 document.add_page_break()
 
-hr_fig_3, (jo_re, total_staff) = plt.subplots(nrows=2, ncols=1, sharex=True,figsize = (7.27,10))
+hr_fig_3, (jo_re, total_staff) = plt.subplots(nrows=2, ncols=1, sharex=True, figsize=(7.27, 10))
 
 jo_re.set_title('New Joiners and Leavers')
 jo_re.plot([i.strftime('%b') for i in emp_data['new_joiner'].index], emp_data['new_joiner']['Joined'],
@@ -2665,23 +2715,24 @@ hr_graph_3_buf.seek(0)
 doc.add_picture(hr_graph_3_buf)
 document.add_page_break()
 
-ops_data: pd.DataFrame = operations(ftimesheet=fTimesheet, financial=cy_ytd_basic_monthwise, end_date=end_date,dExclude=dExclude)
+ops_data: pd.DataFrame = operations(ftimesheet=fTimesheet, financial=cy_ytd_basic_monthwise, end_date=end_date,
+                                    dExclude=dExclude)
 
 page_separator(head='Operations', document=document)
 
 plt.style.use('ggplot')
-fig_ops_1, (cost_line, ph_line) = plt.subplots(nrows=2, ncols=1, sharex=True,figsize = (7.27,10))
+fig_ops_1, (cost_line, ph_line) = plt.subplots(nrows=2, ncols=1, sharex=True, figsize=(7.27, 10))
 
 cost_line.set_title('Transportation and Accommodation Expenses')
 cost_line.plot([i.strftime('%b') for i in ops_data.index], ops_data['Transport'], label='Transport')
-for xy in zip([i.strftime('%b') for i in ops_data.index],ops_data['Transport'].tolist()):
-    cost_line.annotate('{:,}K'.format(int(xy[1]/1_000)) ,xy=xy)
+for xy in zip([i.strftime('%b') for i in ops_data.index], ops_data['Transport'].tolist()):
+    cost_line.annotate('{:,}K'.format(int(xy[1] / 1_000)), xy=xy)
 cost_line.plot([i.strftime('%b') for i in ops_data.index], ops_data['Accommodation'], label='Accommodation')
-for xy in zip([i.strftime('%b') for i in ops_data.index],ops_data['Accommodation'].tolist()):
-    cost_line.annotate('{:,}K'.format(int(xy[1]/1_000)) ,xy=xy)
+for xy in zip([i.strftime('%b') for i in ops_data.index], ops_data['Accommodation'].tolist()):
+    cost_line.annotate('{:,}K'.format(int(xy[1] / 1_000)), xy=xy)
 tick_locations = cost_line.get_yticks()
 cost_line.yaxis.set_major_locator(FixedLocator(tick_locations))
-cost_line.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
+cost_line.yaxis.set_major_formatter(FixedFormatter(['{:.0f}K'.format(i / 1_000) for i in tick_locations]))
 cost_line.legend()
 
 ph_line.set_title('Transportation and Accommodation Per Head')
@@ -2691,7 +2742,7 @@ ph_line.plot([i.strftime('%b') for i in ops_data.index], (ops_data['Accommodatio
              label='Accommodation')
 tick_locations = ph_line.get_yticks()
 ph_line.yaxis.set_major_locator(FixedLocator(tick_locations))
-ph_line.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
+ph_line.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(i) for i in tick_locations]))
 ph_line.legend()
 
 ops_graph_1_buf = BytesIO()
@@ -2702,14 +2753,15 @@ ops_graph_1_buf.seek(0)
 doc.add_picture(ops_graph_1_buf)
 document.add_page_break()
 
-fig_ops_2, (bill_nonbil, efficiency,non_billable) = plt.subplots(nrows=3, ncols=1, figsize = (7.73,10.63), sharex=True,gridspec_kw={'height_ratios': [1,1,2]})
+fig_ops_2, (bill_nonbil, efficiency, non_billable) = plt.subplots(nrows=3, ncols=1, figsize=(7.73, 10.63), sharex=True,
+                                                                  gridspec_kw={'height_ratios': [1, 1, 2]})
 
 bill_nonbil.set_title('Billable Vs Non-Billable Mandays')
 bill_nonbil.plot([i.strftime('%b') for i in ops_data.index], ops_data['productive_md'], label='Productive')
 bill_nonbil.plot([i.strftime('%b') for i in ops_data.index], ops_data['unproductive_md'], label='Un-productive')
 tick_locations = bill_nonbil.get_yticks()
 bill_nonbil.yaxis.set_major_locator(FixedLocator(tick_locations))
-bill_nonbil.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
+bill_nonbil.yaxis.set_major_formatter(FixedFormatter(['{:.0f}K'.format(i / 1_000) for i in tick_locations]))
 bill_nonbil.legend()
 
 efficiency.set_title('Manpower Utilization Efficiency')
@@ -2718,9 +2770,8 @@ efficiency.plot([i.strftime('%b') for i in ops_data.index], (ops_data['productiv
                 label='Efficiency')
 tick_locations = efficiency.get_yticks()
 efficiency.yaxis.set_major_locator(FixedLocator(tick_locations))
-efficiency.yaxis.set_major_formatter(FixedFormatter(['{:,.0f}'.format(int(i)) for i in tick_locations]))
+efficiency.yaxis.set_major_formatter(FixedFormatter(['{:,.0f}%'.format(int(i)) for i in tick_locations]))
 efficiency.legend()
-
 
 periods = pd.date_range(start=start_date, end=end_date, freq='ME').to_pydatetime().tolist()
 
@@ -2728,7 +2779,7 @@ c = {}
 exclude_dict = dExclude.groupby('group')['job_type'].apply(set).to_dict()
 for t in periods:
     period_allocation = profitability['periodic_allocation'].get(t, {})
-    a = {}    
+    a = {}
     for group, job_types in exclude_dict.items():
         for job_type in job_types:
             if job_type in period_allocation:
@@ -2744,7 +2795,6 @@ tick_locations = non_billable.get_yticks()
 non_billable.yaxis.set_major_locator(FixedLocator(tick_locations))
 non_billable.yaxis.set_major_formatter(FixedFormatter(['{:,}'.format(int(i)) for i in tick_locations]))
 non_billable.legend()
-
 
 ops_graph_2_buf = BytesIO()
 plt.tight_layout()
@@ -2766,5 +2816,3 @@ document.core_properties.keywords = ("Chief Accountant\nNasser Bin Nawaf and Par
 doc.save('Monthly FS.docx')
 convert('Monthly FS.docx')
 os.unlink('Monthly FS.docx')
-
-# TODO COHART to show
