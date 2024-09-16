@@ -7,11 +7,11 @@ file_path = r'C:\Masters\Data-ESS.xlsx'
 
 dCoAAdler: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dCoAAdler', usecols=['Ledger_Code'],dtype={'Ledger_Code': 'str'})
 dCusOrder: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dCusOrder', usecols=['Order_ID', 'Customer_Code','Employee_Code'])
-dContracts: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dContracts',
+dContract: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dContract',
                                          usecols=['Order_ID', 'Customer_Code', 'Employee_Code'])
-dContracts['Order_ID'] = dContracts['Order_ID'].str.split('-', expand=True)[0].str.strip()
+dContract['Order_ID'] = dContract['Order_ID'].str.split('-', expand=True)[0].str.strip()
 dEmployee: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dEmployee', usecols=['Employee_Code'])
-dCustomers: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dCustomers',
+dCustomer: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dCustomer',
                                          usecols=['Customer_Code', 'Ledger_Code'])
 dStock: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dStock', usecols=['Part Number'])
 fCollection: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCollection', usecols=['Ledger_Code'])
@@ -31,11 +31,11 @@ fTkt: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fTkt', usecols=['Em
 fER: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fER', usecols=['Employee_Code'])
 fEOS: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fEOS', usecols=['Employee_Code'])
 dOrderAMC: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dOrderAMC', usecols=['Customer_Code','Employee_Code','Order_ID'])
-dJobs:pd.DataFrame = pd.concat([dOrderAMC,dCusOrder,dContracts])
+dJobs:pd.DataFrame = pd.concat([dOrderAMC,dCusOrder,dContract])
 
 
-dataframes: dict = {'dCoAAdler': dCoAAdler, 'fOT': fOT, 'dContracts': dContracts,'fTkt':fTkt,
-                    'dEmployee': dEmployee, 'dCustomers': dCustomers,'fLeave':fLeave,'fER':fER,'fEOS':fEOS,
+dataframes: dict = {'dCoAAdler': dCoAAdler, 'fOT': fOT, 'dContracts': dContract,'fTkt':fTkt,
+                    'dEmployee': dEmployee, 'dCustomers': dCustomer,'fLeave':fLeave,'fER':fER,'fEOS':fEOS,
                     'fGL': fGL, 'fCollection': fCollection, 'dStock': dStock, 'fCreditNote': fCreditNote,
                     'fCC': fCC, 'fBudget': fBudget, 'fMI': fMI, 'dCusOrder': dCusOrder, 'fAMCInv': fAMCInv,
                     'fProInv': fProInv,'fOutSourceInv': fOutSourceInv,'dOrderAMC':dOrderAMC}
@@ -62,7 +62,7 @@ checks: dict = {
 
 base_lists: dict = {'Ledger_Code': set(dCoAAdler['Ledger_Code'].tolist()),
                     'Employee_Code': set(dEmployee['Employee_Code'].tolist()),
-                    'Customer_Code': set(dCustomers['Customer_Code'].tolist()),
+                    'Customer_Code': set(dCustomer['Customer_Code'].tolist()),
                     'Part Number': set(dStock['Part Number'].tolist()),
                     'Order_ID': set(dJobs['Order_ID'].tolist()),
                     }

@@ -1,3 +1,4 @@
+import itertools
 import os
 import statistics
 from datetime import datetime, timedelta
@@ -7,6 +8,7 @@ from itertools import islice
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from data import company_data, company_info, doc_styles, table_style, cogs_ledger_map
 from dateutil.relativedelta import relativedelta
 from docx import Document
 from docx.enum.section import WD_ORIENT, WD_SECTION
@@ -16,8 +18,6 @@ from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor, Cm, Inches
 from docx2pdf import convert
 from matplotlib.ticker import FixedLocator, FixedFormatter
-
-from data import company_data, company_info, doc_styles, table_style, cogs_ledger_map
 
 
 def data_sources(company_id: int) -> dict:
@@ -43,8 +43,8 @@ def data_sources(company_id: int) -> dict:
                                                      'Ledger_Name', 'Second_Level_Group_Name',
                                                      'Fourth_Level_Group_Name'])
     dCustomer: pd.DataFrame = pd.read_excel(io=path, sheet_name='dCustomer',
-                                             usecols=['Customer_Code', 'Ledger_Code', 'Cus_Name', 'Type', 'Credit_Days',
-                                                      'Date_Established'])
+                                            usecols=['Customer_Code', 'Ledger_Code', 'Cus_Name', 'Type', 'Credit_Days',
+                                                     'Date_Established'])
     fOutSourceInv: pd.DataFrame = pd.read_excel(io=path,
                                                 usecols=['Invoice_Number', 'Invoice_Date', 'Customer_Code', 'Order_ID',
                                                          'Net_Amount'], sheet_name='fOutSourceInv')
@@ -69,7 +69,7 @@ def data_sources(company_id: int) -> dict:
     dCusOrder: pd.DataFrame = pd.read_excel(io=path, usecols=['Order_ID', 'Customer_Code', 'Employee_Code'],
                                             sheet_name='dCusOrder')
     dContract: pd.DataFrame = pd.read_excel(io=path, usecols=['Order_ID', 'Customer_Code', 'Employee_Code'],
-                                             sheet_name='dContract')
+                                            sheet_name='dContract')
     dOrderAMC: pd.DataFrame = pd.read_excel(io=path, usecols=['Order_ID', 'Customer_Code', 'Employee_Code'],
                                             sheet_name='dOrderAMC')
     fTimesheet: pd.DataFrame = pd.read_excel(io=path, sheet_name='fTimesheet',
@@ -80,10 +80,11 @@ def data_sources(company_id: int) -> dict:
                                       dtype={'date': str, 'Employee_Code': str, 'job_id': str, 'net': float},
                                       engine='calamine')
     dExclude: pd.DataFrame = pd.read_excel(sheet_name='dExclude', io=path)
+    fAP: pd.DataFrame = pd.read_excel(sheet_name='fAP', io=path, usecols=['Ledger_Code', 'Bracket', 'Balance'])
     return {'fGL': fGL, 'dEmployee': dEmployee, 'dCoAAdler': dCoAAdler, 'fOutSourceInv': fOutSourceInv,
             'fAMCInv': fAMCInv, 'fProInv': fProInv, 'fCreditNote': fCreditNote, 'dCustomer': dCustomer,
             'fBudget': fBudget, 'fCollection': fCollection, 'dContract': dContract, 'dCusOrder': dCusOrder,
-            'dOrderAMC': dOrderAMC, 'fTimesheet': fTimesheet, 'fOT': fOT, 'dExclude': dExclude}
+            'dOrderAMC': dOrderAMC, 'fTimesheet': fTimesheet, 'fOT': fOT, 'dExclude': dExclude, 'fAP': fAP}
 
 
 def first_page(document, report_date: datetime):
@@ -122,7 +123,7 @@ def first_page(document, report_date: datetime):
 def business_unit(row, dEmployee: pd.DataFrame, dCoAAdler: pd.DataFrame) -> str:
     elv_groups: list = dCoAAdler.loc[
         dCoAAdler['First_Level_Group_Name'].isin(['Material Parts & Consumables - Projects',
-                                                  'Maintenance - Projects', 'Depreciation - Projects',
+                                                  'Maintenance - Projects',
                                                   'Others - Projects', 'Projects Revenue'])].index.tolist()
     ledger_code: str = row['Ledger_Code']
     cc: str = row['Cost Center']
@@ -195,7 +196,9 @@ def preprocessing(data: dict) -> dict:
     fTimesheet: pd.DataFrame = data['fTimesheet']
     fOT: pd.DataFrame = data['fOT']
     dExclude: pd.DataFrame = data['dExclude']
-
+    fAP: pd.DataFrame = data['fAP']
+    interco_lgr: set = set(itertools.chain.from_iterable(
+        [dCoAAdler.loc[dCoAAdler['Ledger_Name'].isin(company_data[i]['names'])].index.tolist() for i in company_data]))
     fGL['Cost Center'] = fGL['Cost Center'].str.split(
         '|', expand=True)[0].str.strip()  # ESS0012 | GAURAV VASHISTH
     fGL['Bussiness Unit Name'] = fGL.apply(
@@ -204,6 +207,7 @@ def preprocessing(data: dict) -> dict:
     fGL['Amount'] = fGL['Credit Amount'] - fGL['Debit Amount']
     fGL.drop(columns=['Credit Amount', 'Debit Amount'], inplace=True)
     fGL.loc[:, 'Voucher Date'] = fGL['Voucher Date'] + pd.offsets.MonthEnd(0)
+    fGL.replace('Depreciation - Projects', 'Depreciation', inplace=True)
     dContract['Order_ID'] = dContract['Order_ID'].str.split('-', expand=True)[0]
     fOutSourceInv = pd.merge(
         left=fOutSourceInv, right=dCustomer, on='Customer_Code', how='left')
@@ -239,9 +243,20 @@ def preprocessing(data: dict) -> dict:
     fTimesheet = fTimesheet.loc[~fTimesheet['job_id'].isin(['discharged', 'not_joined'])]
     fTimesheet.loc[:, 'v_date'] = fTimesheet['v_date'] + pd.offsets.MonthEnd(0)
     dEmployee.loc[:, 'travel_cost'] = dEmployee['travel_cost'].fillna(0, inplace=True)
+    fAP = fAP.loc[~fAP['Ledger_Code'].isin(interco_lgr)]
+    fAP.dropna(how='any', inplace=True)
+    fAP = pd.merge(left=fAP, right=dCoAAdler[['Ledger_Name']], left_on='Ledger_Code', how='left',
+                   right_index=True).drop(columns=['Ledger_Code'])
+    fAP = fAP.groupby(by=['Ledger_Name', 'Bracket'], as_index=False)['Balance'].sum()
+    fAP = fAP.pivot_table(index='Ledger_Name', columns='Bracket', values='Balance')
+    fAP.loc[:, 'Total'] = fAP.loc[:, '0-30':].sum(axis=1)
+    fAP = fAP.loc[fAP['Total'] < 0]
+    fAP.dropna(how='all', axis=1, inplace=True)
+    fAP.fillna(0, inplace=True)
+    fAP.reset_index(inplace=True)
     return {'fGL': fGL, 'dEmployee': dEmployee, 'dCoAAdler': dCoAAdler, 'fInvoices': fInvoices, 'fBudget': fBudget,
             'dCustomer': dCustomer, 'fCollection': fCollection, 'dJobs': dJobs, 'fTimesheet': fTimesheet, 'fOT': fOT,
-            'dExclude': dExclude}
+            'dExclude': dExclude, 'fAP': fAP}
 
 
 def coa_ordering(dCoAAdler: pd.DataFrame) -> list:
@@ -828,23 +843,20 @@ def plratios(df_pl: pd.DataFrame, plcombined: pd.DataFrame) -> dict:
         for k, v in df_pl['df_basic'].items():
             if k == 'cy_ytd_basic_monthwise':
                 financial: pd.DataFrame = v.loc[v['Description'].isin(['Gross Profit', 'Net Profit', 'Total Revenue',
-                                                                       'Depreciation', 'Depreciation - Projects',
-                                                                       'Interest Expenses'])]
+                                                                       'Depreciation', 'Interest Expenses'])]
                 gp = financial.index[financial['Description'] == 'Gross Profit'][0]
                 netp = financial.index[financial['Description'] == 'Net Profit'][0]
                 rev = financial.index[financial['Description'] == 'Total Revenue'][0]
                 dep = financial.index[financial['Description'] == 'Depreciation'][0]
-                deppro = financial.index[financial['Description'] == 'Depreciation - Projects'][0]
                 interest = financial.index[financial['Description'] == 'Interest Expenses'][0]
                 financial = financial.transpose().reset_index().rename(columns={gp: 'Gross Profit', netp: 'Net Profit',
                                                                                 rev: 'Total Revenue',
                                                                                 'index': 'Description',
                                                                                 dep: 'Depreciation',
-                                                                                deppro: 'Depreciation - Projects',
                                                                                 interest: 'Interest Expenses'}).drop(0)
                 financial.loc[:, 'EBITDA'] = financial['Net Profit'] - financial['Depreciation'] - financial[
-                    'Depreciation - Projects'] - financial['Interest Expenses']
-                financial.drop(columns=['Depreciation', 'Depreciation - Projects', 'Interest Expenses'], inplace=True)
+                    'Interest Expenses']
+                financial.drop(columns=['Depreciation', 'Interest Expenses'], inplace=True)
                 plmeasures[measure][k] = financial
             else:
                 df: pd.DataFrame = v.set_index('Description')
@@ -855,12 +867,9 @@ def plratios(df_pl: pd.DataFrame, plcombined: pd.DataFrame) -> dict:
                     ratio: float = df.loc['Net Profit', 'Amount'] / df.loc['Total Revenue', 'Amount'] * 100
                 if measure == 'ebitda':
                     ratio: float = (df.loc['Net Profit', 'Amount'] -
-                                    df.loc['Depreciation', 'Amount'] if 'Depreciation' in df.index else 0 -
-                                                                                                        df.loc[
-                                                                                                            'Depreciation - Projects', 'Amount'] if 'Depreciation - Projects' in df.index else 0 -
-                                                                                                                                                                                               df.loc[
-                                                                                                                                                                                                   'Interest Expenses', 'Amount'] if 'Interest Expenses' in df.index else 0) / \
-                                   df.loc['Total Revenue', 'Amount'] * 100
+                                    df.loc['Depreciation', 'Amount'] if 'Depreciation' in df.index else 0 - df.loc[
+                        'Interest Expenses', 'Amount'] if 'Interest Expenses' in df.index else 0) / df.loc[
+                                       'Total Revenue', 'Amount'] * 100
                 plmeasures[measure][k] = ratio
 
     plcombined.fillna(0, inplace=True)
@@ -875,8 +884,7 @@ def plratios(df_pl: pd.DataFrame, plcombined: pd.DataFrame) -> dict:
         netp: float = plcombined.loc['Net Profit', period]
         interest: float = plcombined.loc['Interest Expenses', period]
         dep: float = plcombined.loc['Depreciation', period]
-        depro: float = plcombined.loc['Depreciation - Projects', period]
-        ebitda: float = netp + dep + depro + interest
+        ebitda: float = netp + dep + interest
         df_ratios.loc[df_ratios['period'] == period, 'gp'] = gp
         df_ratios.loc[df_ratios['period'] == period, 'np'] = netp
         df_ratios.loc[df_ratios['period'] == period, 'ebitda'] = ebitda
@@ -1508,9 +1516,10 @@ def job_profitability(fTimesheet: pd.DataFrame, fGL: pd.DataFrame, end_date: dat
                                                                                                    'Amount']]
         fGL_emp: pd.DataFrame = fGL_fitlered.loc[fGL_fitlered['Cost Center'].isin(emp_list)]
         fGL_other: pd.DataFrame = \
-        fGL_fitlered.loc[~fGL_fitlered['Cost Center'].isin(emp_list), ['Amount', 'Ledger_Code']].groupby('Ledger_Code',
-                                                                                                         as_index=False)[
-            'Amount'].sum()
+            fGL_fitlered.loc[~fGL_fitlered['Cost Center'].isin(emp_list), ['Amount', 'Ledger_Code']].groupby(
+                'Ledger_Code',
+                as_index=False)[
+                'Amount'].sum()
         fGL_emp = fGL_emp.groupby(by=['Cost Center', 'Voucher Date', 'Ledger_Code'], as_index=False)['Amount'].sum()
         fGL_emp = fGL_emp.loc[fGL_emp['Amount'] != 0]
         # TODO You may group this to cogs map using the ledger code. to be fixed. it will reduce the no of iteretion by approx 12.5%
@@ -1538,9 +1547,9 @@ def job_profitability(fTimesheet: pd.DataFrame, fGL: pd.DataFrame, end_date: dat
             timesheet_detailed: pd.DataFrame = timesheet_jobs[df_type]
             try:
                 total_days: int = df_sum.loc[(df_sum['v_date'] == i['Voucher Date']) & (
-                            df_sum['cost_center'] == i['Cost Center']), 'count'].iloc[0]
+                        df_sum['cost_center'] == i['Cost Center']), 'count'].iloc[0]
                 timesheet_detailed = timesheet_detailed.loc[(timesheet_detailed['v_date'] == i['Voucher Date']) & (
-                            timesheet_detailed['cost_center'] == i['Cost Center']), ['job_id', 'count']]
+                        timesheet_detailed['cost_center'] == i['Cost Center']), ['job_id', 'count']]
                 allocation_dict_init = {}
                 for _, j in timesheet_detailed.iterrows():
                     # TODO (a) only those cost centers having a value will return a value from below. 
@@ -1622,6 +1631,7 @@ dJobs: pd.DataFrame = cleaned_data['dJobs']
 fTimesheet: pd.DataFrame = cleaned_data['fTimesheet']
 fOT: pd.DataFrame = cleaned_data['fOT']
 dExclude: pd.DataFrame = cleaned_data['dExclude']
+fAP: pd.DataFrame = cleaned_data['fAP']
 
 profitability: dict = job_profitability(fTimesheet=fTimesheet, fGL=merged, end_date=end_date, dEmployee=dEmployee,
                                         dExclude=dExclude, fOT=fOT, fInvoices=fInvoices, cogs_map=cogs_ledger_map,
@@ -2064,6 +2074,32 @@ for _, row in rpp_df.iterrows():
     cells[1].text = number_format(row.iloc[1])
 
 table_formatter(table_name=tbl_rpp, style_name='table_style_1', special=['Total'])
+
+document.add_page_break()
+
+cy_cp_pl_company_title = document.add_paragraph().add_run('Elite Security Services W.L.L')
+apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
+ap_report_title = document.add_paragraph().add_run('Accounts Payable Break-up')
+apply_style_properties(ap_report_title, style_picker(name='report_title'))
+
+tbl_ap = document.add_table(rows=1, cols=fAP.shape[1])
+tbl_ap.columns[0].width = Cm(7.5)
+heading_cells = tbl_ap.rows[0].cells
+
+for i in range(fAP.shape[1]):
+    if i == 0:
+        heading_cells[i].text = 'Supplier'
+    else:
+        heading_cells[i].text = list(fAP.columns)[i]
+
+for _, row in fAP.iterrows():
+    cells = tbl_ap.add_row().cells
+    for j in range(len(row)):
+        if j == 0:
+            cells[0].text = str(row['Ledger_Name'])
+        else:
+            cells[j].text = number_format(row.iloc[j])
+table_formatter(table_name=tbl_ap, style_name='table_style_1', special=[])
 
 document.add_page_break()
 
@@ -2572,7 +2608,7 @@ cus_info_1 = {0: {0: {'name': 'Current Month Internal Guarding (Top Five)', 'df'
               1: {0: {'name': '\nCurrent Month External Guarding (Top Five)', 'df': cp_ex_guard_df},
                   1: {'name': '\nCurrent Month External ELV (Top Five)', 'df': cp_ex_elv_df}},
               2: {0: {'name': '\nYear to Date Internal Guarding (Top Five)', 'df': ytd_in_guard_df},
-                  1: {'name': '\nYear to Date Internal ELV (Top Five)', 'df': ytd_in_guard_df}},
+                  1: {'name': '\nYear to Date Internal ELV (Top Five)', 'df': ytd_in_elv_df}},
               3: {0: {'name': '\nYear to Date External Guarding (Top Five)', 'df': ytd_ex_elv_df},
                   1: {'name': '\nYear to Date External ELV (Top Five)', 'df': ytd_ex_elv_df}}}
 rows_report_1: int = 4

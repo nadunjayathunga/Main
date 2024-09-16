@@ -19,13 +19,13 @@ PATH = r'C:\Masters\Data-NBNL.xlsx'
 
 
 df_gl: pd.DataFrame = pd.read_excel(io=PATH, sheet_name='fGL',
-                                    usecols=['Voucher Date', 'Ledger Code', 'Ledger Name', 'Transaction Type',
+                                    usecols=['Voucher Date', 'Ledger_Code', 'Ledger Name', 'Transaction Type',
                                              'Voucher Number', 'Debit Amount', 'Fourth Level Group Name']) # for nbnl
 # df_gl: pd.DataFrame = pd.read_excel(io=PATH, sheet_name='fGL',
 #                                     usecols=['Voucher Date', 'Ledger_Code', 'Ledger Name', 'Transaction Type',
 #                                              'Voucher Number', 'Debit Amount', 'Fourth Level Group Name']) # for ess
 df_collection: pd.DataFrame = pd.read_excel(io=PATH,
-                                            usecols=['Ledger Code', 'Invoice Number', 'Invoice Amount',
+                                            usecols=['Ledger_Code', 'Invoice Number', 'Invoice Amount',
                                                      'Payment Voucher Number',
                                                      'Payment Date',
                                                      'Invoice Date'],
@@ -45,10 +45,10 @@ df_collection: pd.DataFrame = pd.read_excel(io=PATH,
 #                                             index_col='Invoice Number') # for nbnl
 
 
-df_LogInv :pd.DataFrame = pd.read_excel(io=PATH,usecols=['Invoice Date','Customer Code'],sheet_name='fLogInv')
+df_LogInv :pd.DataFrame = pd.read_excel(io=PATH,usecols=['Invoice Date','Customer_Code'],sheet_name='fLogInv')
 
-# df_dCustomers :pd.DataFrame = pd.read_excel(io=PATH,usecols=['Customer_Code','Cus_Name','Credit_Days','Ledger_Code'],sheet_name='dCustomers') # ESS
-df_dCustomers :pd.DataFrame = pd.read_excel(io=PATH,usecols=['Customer_Code','Cus_Name','Credit_Days','Ledger_Code'],sheet_name='dCustomers') # NBNL
+# df_dCustomer :pd.DataFrame = pd.read_excel(io=PATH,usecols=['Customer_Code','Cus_Name','Credit_Days','Ledger_Code'],sheet_name='dCustomer') # ESS
+df_dCustomer :pd.DataFrame = pd.read_excel(io=PATH,usecols=['Customer_Code','Cus_Name','Credit_Days','Ledger_Code'],sheet_name='dCustomer') # NBNL
 
 
 def days_taken(row) -> int:
@@ -82,7 +82,7 @@ def days_taken(row) -> int:
 
 
 def report(ledger:int, df_collection:pd.DataFrame)->float:
-        inv_filt = (df_gl['Transaction Type'].isin(VOUCHER_TYPES)) & (df_gl['Ledger Code'] == ledger) # for nbnl
+        inv_filt = (df_gl['Transaction Type'].isin(VOUCHER_TYPES)) & (df_gl['Ledger_Code'] == ledger) # for nbnl
         # inv_filt = (df_gl['Transaction Type'].isin(VOUCHER_TYPES)) & (df_gl['Ledger_Code'] == ledger) # for ess
         invoices_list: list = df_gl.loc[inv_filt, 'Voucher Number'].unique().tolist()
         # Payment Voucher Number, invoices that has not been paid at all
@@ -102,9 +102,9 @@ def report(ledger:int, df_collection:pd.DataFrame)->float:
         df_collection.to_csv(f'{ledger}.csv')
         return df_collection['Days_Taken'].median()
 
-# ledgers = [1020201392] # do not enter has str. 
-# for ledger in ledgers:
-#     print(report(ledger=ledger,df_collection=df_collection))
+ledgers = [1020201049] # do not enter has str. 
+for ledger in ledgers:
+    print(report(ledger=ledger,df_collection=df_collection))
 
 
 def median_days(row)->float:
@@ -118,12 +118,12 @@ def median_collection_days()->pd.DataFrame:
      inv_filt = (df_LogInv['Invoice Date'] >= start_date) & (df_LogInv['Invoice Date']<=end_date)
      cust_worked :list = list(set(df_LogInv.loc[inv_filt,'Customer Code'].tolist()))
      report:pd.DataFrame = pd.DataFrame(data={'Customer_Code':cust_worked})
-     report = pd.merge(left=report,right=df_dCustomers,on='Customer_Code',how='left')
+     report = pd.merge(left=report,right=df_dCustomer,on='Customer_Code',how='left')
      report['Actual'] = report.apply(median_days,axis=1)
      report = report.fillna(0)
      report.drop(columns=['Customer_Code','Ledger_Code'],inplace=True)
      return report
 
 
-collection_days = median_collection_days()
-collection_days.to_csv('Collection Days.csv',index=False)
+# collection_days = median_collection_days()
+# collection_days.to_csv('Collection Days.csv',index=False)
