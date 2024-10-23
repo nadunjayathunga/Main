@@ -247,13 +247,18 @@ def preprocessing(data: dict) -> dict:
     fAP.dropna(how='any', inplace=True)
     fAP = pd.merge(left=fAP, right=dCoAAdler[['Ledger_Name']], left_on='Ledger_Code', how='left',
                    right_index=True).drop(columns=['Ledger_Code'])
+    fAP.loc[:,'Balance'] = fAP['Balance'] *-1
     fAP = fAP.groupby(by=['Ledger_Name', 'Bracket'], as_index=False)['Balance'].sum()
     fAP = fAP.pivot_table(index='Ledger_Name', columns='Bracket', values='Balance')
     fAP.loc[:, 'Total'] = fAP.loc[:, '0-30':].sum(axis=1)
-    fAP = fAP.loc[fAP['Total'] < 0]
-    fAP.dropna(how='all', axis=1, inplace=True)
+    fAP = fAP.loc[fAP['Total'] > 0]
+    fAP.dropna(how='all', axis=1,inplace=True)
     fAP.fillna(0, inplace=True)
     fAP.reset_index(inplace=True)
+    for i in fAP.columns:
+        if i != 'Ledger_Name':
+            fAP.loc['Total',i] = fAP[i].sum()
+    fAP.loc['Total','Ledger_Name'] = 'Total'
     return {'fGL': fGL, 'dEmployee': dEmployee, 'dCoAAdler': dCoAAdler, 'fInvoices': fInvoices, 'fBudget': fBudget,
             'dCustomer': dCustomer, 'fCollection': fCollection, 'dJobs': dJobs, 'fTimesheet': fTimesheet, 'fOT': fOT,
             'dExclude': dExclude, 'fAP': fAP}
@@ -1148,11 +1153,11 @@ def closing_date(row, dCustomer: pd.DataFrame) -> datetime:
     Returns:
         datetime: last date of the month to which voucher becomes due
     """
-    ledger_code: int = row['Ledger_Code']
+    ledger_code: int = row['ledger_code']
 
-    if ledger_code in dCustomer['Ledger_Code'].tolist():
-        credit_days: int = int(dCustomer.loc[dCustomer['Ledger_Code'] == ledger_code, 'Credit_Days'].iloc[0])
-        due_date = row['Voucher Date'] + timedelta(days=credit_days)
+    if ledger_code in dCustomer['ledger_code'].tolist():
+        credit_days: int = int(dCustomer.loc[dCustomer['ledger_code'] == ledger_code, 'credit_days'].iloc[0])
+        due_date = row['voucher_date'] + timedelta(days=credit_days)
         return due_date + relativedelta(day=31)
     else:
         pass
@@ -1173,12 +1178,12 @@ def already_collected(row, fGL: pd.DataFrame, fCollection: pd.DataFrame) -> floa
         float: Amount already collected out of target collection
     """
 
-    fGL = fGL.loc[(fGL['Transaction Type'].isin(VOUCHER_TYPES)) & (fGL['Ledger_Code'] >= 1000000000) & (
-            fGL['Ledger_Code'] <= 1999999999)]
+    fGL = fGL.loc[(fGL['transaction_type'].isin(VOUCHER_TYPES)) & (fGL['ledger_code'] >= 1000000000) & (
+            fGL['ledger_code'] <= 1999999999)]
     fGL['Due Date'] = fGL.apply(closing_date, axis=1, args=[dCustomer])
     start_date: datetime = row['Due Date'].replace(day=1)
     due_inv_list: list = fGL.loc[
-        (fGL['Due Date'] >= start_date) & (fGL['Due Date'] <= row['Due Date']), 'Voucher Number'].unique()
+        (fGL['Due Date'] >= start_date) & (fGL['Due Date'] <= row['Due Date']), 'voucher_number'].unique()
     collected_filt = (fCollection['invoice_number'].isin(due_inv_list)) & (fCollection['voucher_date'] < start_date)
     amount: float = fCollection.loc[collected_filt, 'voucher_amount'].sum()
     return amount
@@ -1201,17 +1206,17 @@ def collection(fCollection: pd.DataFrame, end_date: datetime, fGL: pd.DataFrame,
     # 3. Receipts that were not allocated to invoices are not part of this report.
     # for 3 above check fCollection/Invoice Number Contains RV/CN and Payment Date ->Blank
     fGL1 = fGL.copy()
-    fGL1 = fGL1.loc[(fGL1['Transaction Type'].isin(VOUCHER_TYPES)) & (fGL1['Ledger_Code'] >= 1000000000) & (
-            fGL1['Ledger_Code'] <= 1999999999)]
-    fGL1.loc[:, 'Amount'] = fGL1['Amount'] * -1
+    fGL1 = fGL1.loc[(fGL1['transaction_type'].isin(VOUCHER_TYPES)) & (fGL1['ledger_code'] >= 1000000000) & (
+            fGL1['ledger_code'] <= 1999999999)]
+    fGL1.loc[:, 'amount'] = fGL1['amount'] * -1
     fGL1.loc[:, 'Due Date'] = fGL1.apply(closing_date, axis=1, args=[dCustomer])
     fGL1 = fGL1.loc[(fGL1['Due Date'] >= start_date) & (fGL1['Due Date'] <= end_date)]
-    fGL1 = fGL1.groupby(by=['Due Date'], as_index=False)['Amount'].sum()
+    fGL1 = fGL1.groupby(by=['Due Date'], as_index=False)['amount'].sum()
     fGL1.loc[:, 'Already_Collected'] = fGL1.apply(already_collected, axis=1, args=[fGL, fCollection])
-    fGL1['Amount'] = fGL1['Amount'] - fGL1['Already_Collected']
+    fGL1['amount'] = fGL1['amount'] - fGL1['Already_Collected']
 
     fGL1.drop(columns=['Already_Collected'], inplace=True)
-    fGL1.rename(columns={'Amount': 'Target'}, inplace=True)
+    fGL1.rename(columns={'amount': 'Target'}, inplace=True)
 
     combined: pd.DataFrame = pd.concat([fGL1.set_index('Due Date'), fCollection1.set_index('Due Date')], axis=1,
                                        join='outer').reset_index()

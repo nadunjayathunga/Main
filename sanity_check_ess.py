@@ -5,32 +5,32 @@ init()
 
 file_path = r'C:\Masters\Data-ESS.xlsx'
 
-dCoAAdler: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dCoAAdler', usecols=['Ledger_Code'],dtype={'Ledger_Code': 'str'})
-dCusOrder: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dCusOrder', usecols=['Order_ID', 'Customer_Code','Employee_Code'])
+dCoAAdler: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dCoAAdler', usecols=['ledger_code'],dtype={'ledger_code': 'str'})
+dCusOrder: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dCusOrder', usecols=['order_id', 'customer_code','emp_id'])
 dContract: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dContract',
-                                         usecols=['Order_ID', 'Customer_Code', 'Employee_Code'])
-dContract['Order_ID'] = dContract['Order_ID'].str.split('-', expand=True)[0].str.strip()
-dEmployee: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dEmployee', usecols=['Employee_Code'])
+                                         usecols=['order_id', 'customer_code', 'emp_id'])
+dContract['order_id'] = dContract['order_id'].str.split('-', expand=True)[0].str.strip()
+dEmployee: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dEmployee', usecols=['emp_id'])
 dCustomer: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dCustomer',
-                                         usecols=['Customer_Code', 'Ledger_Code'])
-dStock: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dStock', usecols=['Part Number'])
-fCollection: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCollection', usecols=['Ledger_Code'])
-fGL: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fGL', usecols=['Ledger_Code'],dtype={'Ledger_Code': 'str'})
+                                         usecols=['customer_code', 'ledger_code'])
+dStock: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dStock', usecols=['part_number'])
+fCollection: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCollection', usecols=['ledger_code'])
+fGL: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fGL', usecols=['ledger_code'],dtype={'ledger_code': 'str'})
 fOutSourceInv: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fOutSourceInv',
-                                            usecols=['Order_ID', 'Customer_Code'])
-fAMCInv: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fAMCInv', usecols=['Customer_Code','Order_ID','Employee_Code'])
-fProInv: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fProInv', usecols=['Customer_Code', 'Order_ID','Employee_Code'])
-fCreditNote: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCreditNote', usecols=['Ledger_Code','Order_ID'])
-fMI: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fMI', usecols=['Part Number', 'Employee_Code'])
-fMI['Employee_Code'] = fMI['Employee_Code'].str.split('-', expand=True)[0]
-fBudget: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fBudget', usecols=['Ledger_Code'])
-fOT: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fOT', usecols=['Employee_Code'])
-fCC: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCC', usecols=['Employee_Code'])
-fLeave: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fLeave', usecols=['Employee_Code'])
-fTkt: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fTkt', usecols=['Employee_Code'])
-fER: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fER', usecols=['Employee_Code'])
-fEOS: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fEOS', usecols=['Employee_Code'])
-dOrderAMC: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dOrderAMC', usecols=['Customer_Code','Employee_Code','Order_ID'])
+                                            usecols=['order_id', 'customer_code'])
+fAMCInv: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fAMCInv', usecols=['customer_code','order_id','emp_id'])
+fProInv: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fProInv', usecols=['customer_code', 'order_id','emp_id'])
+fCreditNote: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCreditNote', usecols=['ledger_code','order_id'])
+fMI: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fMI', usecols=['part_number', 'emp_id'])
+fMI['emp_id'] = fMI['emp_id'].str.split('-', expand=True)[0]
+fBudget: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fBudget', usecols=['ledger_code'])
+fOT: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fOT', usecols=['emp_id'])
+fCC: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCC', usecols=['emp_id'])
+fLeave: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fLeave', usecols=['emp_id'])
+fTkt: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fTkt', usecols=['emp_id'])
+fER: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fER', usecols=['emp_id'])
+fEOS: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fEOS', usecols=['emp_id'])
+dOrderAMC: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dOrderAMC', usecols=['customer_code','emp_id','order_id'])
 dJobs:pd.DataFrame = pd.concat([dOrderAMC,dCusOrder,dContract])
 
 
@@ -41,30 +41,30 @@ dataframes: dict = {'dCoAAdler': dCoAAdler, 'fOT': fOT, 'dContracts': dContract,
                     'fProInv': fProInv,'fOutSourceInv': fOutSourceInv,'dOrderAMC':dOrderAMC}
 
 checks: dict = {
-    'fCC': ['Employee_Code'],
-    'fGL': ['Ledger_Code'],
-    'dContracts': ['Customer_Code', 'Employee_Code'],
-    'fCollection': ['Ledger_Code'],
-    'fCreditNote': ['Ledger_Code','Order_ID'],
-    'fMI': ['Employee_Code', 'Part Number'],
-    'fOT': ['Employee_Code'],
-    'fOutSourceInv': ['Customer_Code', 'Order_ID'],
-    'fAMCInv': ['Customer_Code','Order_ID','Employee_Code'],
-    'fProInv': ['Customer_Code', 'Order_ID','Employee_Code'],
-    'fBudget': ['Ledger_Code'],
-    'fLeave':['Employee_Code'],
-    'fTkt':['Employee_Code'],
-    'fER':['Employee_Code'],
-    'fEOS':['Employee_Code'],
-    'dCusOrder':['Customer_Code','Employee_Code'],
-    'dOrderAMC':['Customer_Code','Employee_Code']
+    'fCC': ['emp_id'],
+    'fGL': ['ledger_code'],
+    'dContracts': ['customer_code', 'emp_id'],
+    'fCollection': ['ledger_code'],
+    'fCreditNote': ['ledger_code','order_id'],
+    'fMI': ['emp_id', 'part_number'],
+    'fOT': ['emp_id'],
+    'fOutSourceInv': ['customer_code', 'order_id'],
+    'fAMCInv': ['customer_code','order_id','emp_id'],
+    'fProInv': ['customer_code', 'order_id','emp_id'],
+    'fBudget': ['ledger_code'],
+    'fLeave':['emp_id'],
+    'fTkt':['emp_id'],
+    'fER':['emp_id'],
+    'fEOS':['emp_id'],
+    'dCusOrder':['customer_code','emp_id'],
+    'dOrderAMC':['customer_code','emp_id']
 }
 
-base_lists: dict = {'Ledger_Code': set(dCoAAdler['Ledger_Code'].tolist()),
-                    'Employee_Code': set(dEmployee['Employee_Code'].tolist()),
-                    'Customer_Code': set(dCustomer['Customer_Code'].tolist()),
-                    'Part Number': set(dStock['Part Number'].tolist()),
-                    'Order_ID': set(dJobs['Order_ID'].tolist()),
+base_lists: dict = {'ledger_code': set(dCoAAdler['ledger_code'].tolist()),
+                    'emp_id': set(dEmployee['emp_id'].tolist()),
+                    'customer_code': set(dCustomer['customer_code'].tolist()),
+                    'part_number': set(dStock['part_number'].tolist()),
+                    'order_id': set(dJobs['order_id'].tolist()),
                     }
 
 def missing_data(dataframe: pd.DataFrame, tests: list) -> list:
