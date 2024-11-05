@@ -1,16 +1,16 @@
 from docx import Document
+import pandas as pd
 
 from helper_3 import (welcome_page, data_sources, preprocessing, first_page, closing, page_separator, header,
                     pl_month_brief, pl_month_detailed, log_div_profit, change_orientation, pl_ytd_brief,
                     gpnpebitda_graph, plmonthwise, excpdetails, guardingbumonthwise, elvbumonthwise, credits,
                     plhistorical, bshistorical, rpbalances, apbalances, main_bs_ratios, revenue,
                     revenue_dashboard, data_output, revenue_dashboard_two, toc_customer, customer_specifics,
-                    revenue_movement, hrrelated, opsrelated,cohart)
+                    revenue_movement, hrrelated, opsrelated,cohart,credit_rating,ops_explain)
 
 welcome_info: dict = welcome_page()
 raw_data: dict = data_sources(engine=welcome_info['engine'], database=welcome_info['database'])
 refined_data: dict = preprocessing(data=raw_data, database=welcome_info['database'])
-
 output_data: dict = data_output(refined=refined_data, welcome_info=welcome_info)
 CUST_LOGO_PATH = r'C:\Masters\images\customer'
 document = Document()
@@ -39,13 +39,14 @@ document.add_page_break()
 change_orientation(document=document, method='p')
 header(title='Explanations for Major Changes', company=welcome_info['long_name'], document=document)
 excpdetails(document=document, data=output_data['merged'], end_date=welcome_info['end_date'])
-change_orientation(document=document, method='l')
+document.add_page_break()
 if welcome_info['database'] == 'nbn_logistics':
+    change_orientation(document=document, method='l')
     header(title='Division wise Profitability', company=welcome_info['long_name'], document=document)
     log_div_profit(profit=output_data['cat_profit'], document=document)
     change_orientation(document=document, method='p')
-else:
-    welcome_info['database'] == 'elite_security'
+elif welcome_info['database'] == 'elite_security':
+    change_orientation(document=document, method='l')
     header(title='Profit & Loss for Guarding Division', company=welcome_info['long_name'], document=document)
     guardingbumonthwise(document=document, end_date=welcome_info['end_date'],
                         special=['Total Revenue', 'Gross Profit', 'Total Overhead', 'Net Profit'],
@@ -58,12 +59,12 @@ else:
                    fBudget=refined_data['fBudget'], merged=output_data['merged'], sort_order=output_data['sort_order'])
     document.add_page_break()
     change_orientation(document=document, method='p')
+else:
+    pass
 header(title='Historical Profit and Loss Comparison', company=welcome_info['long_name'], document=document)
-
 plhistorical(document=document, data=output_data['plcombined'],
              special=['Total Revenue', 'Gross Profit', 'Total Overhead', 'Net Profit'],
              sort_order=output_data['sort_order'])
-
 document.add_page_break()
 change_orientation(document=document, method='l')
 header(title='Statement of Financial Position (Balance Sheet)', company=welcome_info['long_name'], document=document)
@@ -79,9 +80,8 @@ document.add_page_break()
 header(title='Accounts Payable Break-up', company=welcome_info['long_name'], document=document)
 apbalances(document=document, fAP=refined_data['fAP'])
 document.add_page_break()
-
 main_bs_ratios(document=document, end_date=welcome_info['end_date'], bsdata=output_data['bscombined'],
-               pldata=output_data['plcombined'], periods=output_data['financial_periods_bs'])
+               pldata=output_data['plcombined'], periods=output_data['financial_periods_bs'],database = welcome_info['database'])
 document.add_page_break()
 page_separator(head='Sales', document=document)
 change_orientation(document=document, method='l')
@@ -95,8 +95,6 @@ revenue_dashboard_two(df_rev=df_rev, document=document, refined_data=refined_dat
 document.add_page_break()
 change_orientation(document=document, method='p')
 header(title='Key data about customers', company=welcome_info['long_name'], document=document)
-toc_customer(document=document, end_date=welcome_info['end_date'], fInvoices=refined_data['fInvoices'])
-document.add_page_break()
 profitability: dict = customer_specifics(document=document, fInvoices=refined_data['fInvoices'],
                                          end_date=welcome_info['end_date'],
                                          dCustomer=refined_data['dCustomer'], path=CUST_LOGO_PATH,
@@ -107,6 +105,7 @@ profitability: dict = customer_specifics(document=document, fInvoices=refined_da
                                          fTimesheet=refined_data.get('ftimesheet'),
                                          database=welcome_info['database'],
                                          fData=refined_data.get('fData'),fLogInv=refined_data.get('fLogInv'))
+document.add_page_break()
 revenue_movement(document=document, fInvoices=refined_data['fInvoices'], end_date=welcome_info['end_date'],database=welcome_info['database'])
 if welcome_info['database'] == 'nbn_logistics':
     cohart(document=document,end_date=welcome_info['end_date'],fInvoices=refined_data['fInvoices'],fSalesTill2020=refined_data['fSalesTill2020'],dCustomer=refined_data['dCustomer'])
@@ -120,3 +119,4 @@ if welcome_info['database'] == 'elite_security':
             profitability=profitability)
 credits(document=document)
 closing(document=document, abbr=welcome_info['abbr'])
+

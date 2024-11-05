@@ -1179,6 +1179,7 @@ def credits(document):
 
 def plhistorical(document, special: list, data: pd.DataFrame, sort_order: list):
     df:pd.DataFrame = data.copy()
+
     df.reset_index(inplace=True,drop=True)
 
     df.drop(columns=['last12'],inplace=True)
@@ -2518,10 +2519,10 @@ def salary_allocation(row, sal_allocation: pd.DataFrame, overall_rev: pd.DataFra
         custom: float = row['custom'] / custom_overall * custom_allocation
 
         transport_overall: float = overall_rev.loc[(overall_rev['voucher_date'] == voucher_date) & (
-            overall_rev['category'].isin(['qafco', 'general'])), 'transport'].sum()
+            overall_rev['category'].isin(['qafco'])), 'transport'].sum()
         try:
             transport_allocation: float = sal_allocation.loc[(sal_allocation['voucher_date'] == voucher_date) & (
-                sal_allocation['category'].isin(['qafco', 'general'])), 'transport'].sum()
+                sal_allocation['category'].isin(['qafco'])), 'transport'].sum()
         except IndexError:
             transport_allocation = 0
         transport: float = row['transport'] / transport_overall * transport_allocation
@@ -2731,7 +2732,7 @@ def job_profitability(fTimesheet: pd.DataFrame, fGL: pd.DataFrame, end_date: dat
             'ruwais': {'customers': ['CUS0794', 'CUS0781', 'CUS0787', 'CUS0613', 'CUS0756', 'CUS0813', 'CUS0810'],
                        'staff': ['NBNL0095', 'NBNL0096', 'NBNL0106']},
             'qafco': {'customers': ['CUS0806'],
-                      'staff': ['NBNL0108','NBNL0112']}}
+                      'staff': ['NBNL0108','NBNL0112','NBNL0066']}}
         invoice_values: dict = total_revenue(dLogContract=dJobs, fData=fData, exclusion=exclusion)
         nbnl_profitability: pd.DataFrame = initial_profit(dEmployee=dEmployee, fGL=fGL, invoice_values=invoice_values,
                                                           exclusion=exclusion)
@@ -2747,7 +2748,6 @@ def job_profitability(fTimesheet: pd.DataFrame, fGL: pd.DataFrame, end_date: dat
         nbnl_profitability.loc[:, 'amount'] = nbnl_profitability['prwosal'] + nbnl_profitability['custom_sal'] + \
                                               nbnl_profitability['transport_sal'] + nbnl_profitability['freight_sal']
         nbnl_profitability.loc[:, 'net_profit'] = nbnl_profitability['amount'] + nbnl_profitability['overhead']
-        nbnl_profitability.to_csv('nbnl_profitability_aug.csv')
         filt_for_month = (nbnl_profitability['voucher_date'] <= end_date) & (
                 nbnl_profitability['voucher_date'] >= datetime(year=end_date.year, month=end_date.month, day=1))
 

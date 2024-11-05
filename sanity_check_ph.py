@@ -15,61 +15,61 @@ print('\n')
 file_name: str = company_info[company_id]['data']['file_name']
 file_path = f'C:\Masters\{file_name}.xlsx'
 
-dCoAAdler: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dCoAAdler', usecols=['Ledger_Code'])
-dJobs: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dJobs',
-                                    usecols=['Order_Reference_Number', 'Customer_Code', 'Emp_id'])
-dJobs['Order_Reference_Number'] = dJobs['Order_Reference_Number'].str.split('-', expand=True)[0]
-dCustomers: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dCustomers',
-                                         usecols=['Customer_Code', 'Ledger_Code'])
-dEmployee: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dEmployee', usecols=['Employee_Code'])
-dStock: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dStock', usecols=['Part Number'])
+dCoAAdler: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dCoAAdler', usecols=['ledger_code'])
+dJobs: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dContract',
+                                    usecols=['order_id', 'customer_code', 'emp_id'])
+dJobs['order_id'] = dJobs['order_id'].str.split('-', expand=True)[0]
+dCustomer: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dCustomer',
+                                         usecols=['customer_code', 'ledger_code'])
+dEmployee: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dEmployee', usecols=['emp_id'])
+dStock: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dStock', usecols=['part_number'])
 fOT: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fOT', usecols=['cost_center'])
-fCC: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCC', usecols=['Emp_Code'])
-fGL: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fGL', usecols=['Ledger Code', ])
-fCollection: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCollection', usecols=['Ledger Code'])
+fCC: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCC', usecols=['emp_id'])
+fGL: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fGL', usecols=['ledger_code'])
+fCollection: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCollection', usecols=['ledger_code'])
 fTimesheet: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fTimesheet', usecols=['employee_code'])
-fCN: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCN', usecols=['Ledger Code', 'Job Code'])
-fInvoices: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fInvoices', usecols=['Job Code', 'Customer_Code'])
+fCreditNote: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCreditNote', usecols=['ledger_code', 'order_id'])
+fOutSourceInv: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fOutSourceInv', usecols=['order_id', 'customer_code'])
 fInvCI: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fInvCI',
-                                     usecols=['Customer Code', 'Sales Engineer Code'])
-fMI: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fMI', usecols=['Part Number', 'Cost Centre', 'Job'])
-fMI['Job'] = fMI['Job'].str.split('-', expand=True)[0]
-fMI['Job'] = fMI['Job'].fillna('PH/CTR230020')
-fMI['Cost Centre'] = fMI['Cost Centre'].str.split('-', expand=True)[0]
-fMI['Cost Centre'] = fMI['Cost Centre'].fillna('PH00001')
+                                     usecols=['customer_code', 'emp_id'])
+fMI: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fMI', usecols=['part_number', 'emp_id', 'order_id'])
+fMI['order_id'] = fMI['order_id'].str.split('-', expand=True)[0]
+fMI['order_id'] = fMI['order_id'].fillna('PH/CTR230020')
+fMI['emp_id'] = fMI['emp_id'].str.split('-', expand=True)[0]
+fMI['emp_id'] = fMI['emp_id'].fillna('PH00001')
 
 dataframes: dict = {'dCoAAdler': dCoAAdler, 'fOT': fOT, 'dJobs': dJobs,
-                    'dEmployee': dEmployee, 'dCustomers': dCustomers,
-                    'fGL': fGL, 'fCollection': fCollection, 'dStock': dStock, 'fCC': fCC, 'fInvoices': fInvoices,
-                    'fInvCI': fInvCI, 'fTimesheet': fTimesheet, 'fCN': fCN, 'fMI': fMI}
+                    'dEmployee': dEmployee, 'dCustomers': dCustomer,
+                    'fGL': fGL, 'fCollection': fCollection, 'dStock': dStock, 'fCC': fCC, 'fOutSourceInv': fOutSourceInv,
+                    'fInvCI': fInvCI, 'fTimesheet': fTimesheet, 'fCreditNote': fCreditNote, 'fMI': fMI}
 
-column_rename: dict = {'Ledger_Code': ['Ledger_Code', 'Ledger Code'],
-                       'Order_Reference_Number': ['Order_Reference_Number', 'Job Code', 'Order Reference Number',
-                                                  'Job'],
-                       'Customer_Code': ['Customer_Code', 'Customer Code'],
-                       'Part Number': ['Part Number'],
-                       'Employee_Code': ['Employee_Code', 'Emp_id', 'cost_center', 'Emp_Code', 'employee_code',
-                                         'Sales Engineer Code', 'Cost Centre'],
+column_rename: dict = {'ledger_code': ['ledger_code', 'ledger_code'],
+                       'order_id': ['order_id', 'order_id', 'Order Reference Number',
+                                                  'order_id'],
+                       'customer_code': ['customer_code', 'customer_code'],
+                       'part_number': ['part_number'],
+                       'emp_id': ['emp_id', 'emp_id', 'cost_center', 'emp_id', 'employee_code',
+                                         'emp_id', 'emp_id'],
                        }
 
-checks: dict = {'fTimesheet': ['Employee_Code'],
-                'fCC': ['Employee_Code'],
-                'fGL': ['Ledger_Code'],
-                'dJobs': ['Customer_Code', 'Employee_Code'],
-                'fCollection': ['Ledger_Code'],
-                'fCN': ['Ledger_Code', 'Order_Reference_Number'],
-                'fInvoices': ['Order_Reference_Number', 'Customer_Code'],
-                'fInvCI': ['Customer_Code', 'Employee_Code'],
-                'fMI': ['Order_Reference_Number', 'Employee_Code', 'Part Number'],
-                'fOT': ['Employee_Code']
+checks: dict = {'fTimesheet': ['emp_id'],
+                'fCC': ['emp_id'],
+                'fGL': ['ledger_code'],
+                'dJobs': ['customer_code', 'emp_id'],
+                'fCollection': ['ledger_code'],
+                'fCreditNote': ['ledger_code', 'order_id'],
+                'fOutSourceInv': ['order_id', 'customer_code'],
+                'fInvCI': ['customer_code', 'emp_id'],
+                'fMI': ['order_id', 'emp_id', 'part_number'],
+                'fOT': ['emp_id']
                 }
 
-base_lists: dict = {'Ledger_Code': list(set(dCoAAdler['Ledger_Code'].tolist())),
-                    'Order_Reference_Number': [job.split(sep='-')[0] for job in
-                                               list(set(dJobs['Order_Reference_Number'].tolist()))],
-                    'Employee_Code': (set(dEmployee['Employee_Code'].tolist())),
-                    'Customer_Code': list(set(dCustomers['Customer_Code'].tolist())),
-                    'Part Number': list(set(dStock['Part Number'].tolist())),
+base_lists: dict = {'ledger_code': list(set(dCoAAdler['ledger_code'].tolist())),
+                    'order_id': [job.split(sep='-')[0] for job in
+                                               list(set(dJobs['order_id'].tolist()))],
+                    'emp_id': (set(dEmployee['emp_id'].tolist())),
+                    'customer_code': list(set(dCustomer['customer_code'].tolist())),
+                    'part_number': list(set(dStock['part_number'].tolist())),
                     }
 
 
