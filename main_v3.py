@@ -1,12 +1,12 @@
 from docx import Document
-import pandas as pd
+
 
 from helper_3 import (welcome_page, data_sources, preprocessing, first_page, closing, page_separator, header,
                     pl_month_brief, pl_month_detailed, log_div_profit, change_orientation, pl_ytd_brief,
                     gpnpebitda_graph, plmonthwise, excpdetails, guardingbumonthwise, elvbumonthwise, credits,
                     plhistorical, bshistorical, rpbalances, apbalances, main_bs_ratios, revenue,
-                    revenue_dashboard, data_output, revenue_dashboard_two, toc_customer, customer_specifics,
-                    revenue_movement, hrrelated, opsrelated,cohart,credit_rating,ops_explain)
+                    revenue_dashboard, data_output, revenue_dashboard_two,  customer_specifics,
+                    revenue_movement, hrrelated, opsrelated,cohart)
 
 welcome_info: dict = welcome_page()
 raw_data: dict = data_sources(engine=welcome_info['engine'], database=welcome_info['database'])
@@ -104,7 +104,7 @@ profitability: dict = customer_specifics(document=document, fInvoices=refined_da
                                          fCollection=refined_data['fCollection'], fOT=refined_data.get('fOT'),
                                          fTimesheet=refined_data.get('ftimesheet'),
                                          database=welcome_info['database'],
-                                         fData=refined_data.get('fData'),fLogInv=refined_data.get('fLogInv'))
+                                         fData=refined_data.get('fData'),fLogInv=refined_data.get('fLogInv'),fMI = refined_data.get('fMI'))
 document.add_page_break()
 revenue_movement(document=document, fInvoices=refined_data['fInvoices'], end_date=welcome_info['end_date'],database=welcome_info['database'])
 if welcome_info['database'] == 'nbn_logistics':
@@ -118,5 +118,5 @@ if welcome_info['database'] == 'elite_security':
             end_date=welcome_info['end_date'], fTimesheet=refined_data.get('ftimesheet'),
             profitability=profitability)
 credits(document=document)
-closing(document=document, abbr=welcome_info['abbr'])
+closing(document=document, abbr=welcome_info['abbr'],end_date=welcome_info['end_date'])
 

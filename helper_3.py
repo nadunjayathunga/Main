@@ -1,27 +1,27 @@
-import sys
-
-sys.path.append(r'C:\Users\NadunJayathunga\OneDrive - NBN Holdings\Financials\Other\Programmes\Dashboards\Main')
-import pandas as pd
-from dateutil.relativedelta import relativedelta
-from datetime import datetime, timedelta
-from sqlalchemy import create_engine
-from colorama import Fore, init
-from docx.shared import Pt, RGBColor, Cm, Inches
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.section import WD_ORIENT, WD_SECTION
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.ticker import FixedLocator, FixedFormatter
-from matplotlib.gridspec import GridSpec
-from io import BytesIO
+import calendar
 import itertools
-from itertools import islice
-from docx2pdf import convert
 import os
 import statistics
-import calendar
+import sys
+from datetime import datetime, timedelta
+from io import BytesIO
+from itertools import islice
+
+import matplotlib.pyplot as plt
+import numpy as np
+# sys.path.append(r'C:\Users\NadunJayathunga\OneDrive - NBN Holdings\Financials\Other\Programmes\Dashboards\Main')
+import pandas as pd
+from colorama import Fore, init
+from dateutil.relativedelta import relativedelta
+from docx.enum.section import WD_ORIENT, WD_SECTION
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Pt, RGBColor, Cm, Inches
+from docx2pdf import convert
+from matplotlib.gridspec import GridSpec
+from matplotlib.ticker import FixedLocator, FixedFormatter
+from sqlalchemy import create_engine
 
 from data import company_info, db_info, doc_styles, table_style, SYSTEM_CUT_OFF, company_data, cogs_ledger_map, \
     VOUCHER_TYPES
@@ -96,7 +96,8 @@ def data_sources(engine, database: str) -> dict:
         ftimesheet: pd.DataFrame = pd.read_sql_table(table_name='ftimesheet', con=engine)
         fOT: pd.DataFrame = pd.read_sql_table(table_name='fOT', con=engine)
         dExclude: pd.DataFrame = pd.read_sql_table(table_name='dExclude', con=engine)
-        ess_specific: dict = {'ftimesheet': ftimesheet, 'fOT': fOT, 'dExclude': dExclude}
+        fMI: pd.DataFrame = pd.read_sql_query(sql=f'SELECT * FROM fmi', con=engine)
+        ess_specific: dict = {'ftimesheet': ftimesheet, 'fOT': fOT, 'dExclude': dExclude, 'fMI': fMI}
         common = common | ess_specific
     elif database == 'nbn_logistics':
         fLogInv: pd.DataFrame = pd.read_sql_table(table_name='fLogInv', con=engine)
@@ -318,9 +319,10 @@ def preprocessing(data: dict, database: str) -> dict:
         fOT.loc[:, 'amount'] = fOT['amount'] * -1
         ftimesheet = ftimesheet.loc[~ftimesheet['order_id'].isin(['discharged', 'not_joined'])]
         ftimesheet.loc[:, 'v_date'] = ftimesheet['v_date'] + pd.offsets.MonthEnd(0)
+        fMI = data['fMI']
 
         ess_specific: dict = {'ftimesheet': ftimesheet, 'fOT': fOT,
-                              'dExclude': dExclude}
+                              'dExclude': dExclude, 'fMI': fMI}
         common = common | ess_specific
     elif database == 'premium':
         ph_specific: dict = {}
@@ -374,10 +376,10 @@ def first_page(document, report_date: datetime, abbr: str, long_name: str):
     return document
 
 
-def closing(document, abbr: str):
-    document.save(f"{abbr}-Monthly FS.docx")
-    convert(f"{abbr}-Monthly FS.docx")
-    os.unlink(f"{abbr}-Monthly FS.docx")
+def closing(document, abbr: str,end_date:datetime):
+    document.save(f"{abbr}-Monthly FS-{end_date.strftime('%b')}.docx")
+    convert(f"{abbr}-Monthly FS-{end_date.strftime('%b')}.docx")
+    os.unlink(f"{abbr}-Monthly FS-{end_date.strftime('%b')}.docx")
 
 
 def page_separator(head: str, document):
@@ -1325,28 +1327,26 @@ def balancesheet(data: pd.DataFrame, end_date: datetime, dCoAAdler: pd.DataFrame
     bs_data.loc['Accruals & Other Payables', 'amount'] = bs_data.loc[
                                                              'Accruals & Other Payables', 'amount'] - cr_in_ar - rounding_diff
     bs_data.loc['Retained Earnings',
-    'amount'] = bs_data.loc['Retained Earnings', 'amount'] if 'Retained Earnings' in bs_data.index else 0 + cum_profit
+    'amount'] = (bs_data.loc['Retained Earnings', 'amount'] if 'Retained Earnings' in bs_data.index else 0) + cum_profit
     bs_data = pd.concat([bs_data, rpr_row, rpp_row], ignore_index=False)
 
     ca: float = bs_data.loc['Cash & Cash Equivalents', 'amount'] + bs_data.loc['Inventory', 'amount'] + bs_data.loc[
         'Other Receivable', 'amount'] + bs_data.loc['Trade Receivables', 'amount'] + bs_data.loc[
                     'Due From Related Parties', 'amount']
     nca: float = (bs_data.loc['Intangible Assets', 'amount'] if 'Intangible Assets' in bs_data.index else 0) + \
-                 bs_data.loc[
-                     'Property, Plant  & Equipment', 'amount'] if 'Property, Plant  & Equipment' in bs_data.index else 0 + \
-                                                                                                                       bs_data.loc[
-                                                                                                                           'Right of use Asset', 'amount'] if 'Right of use Asset' in bs_data.index else 0
-    equity: float = bs_data.loc['Retained Earnings', 'amount'] if 'Retained Earnings' in bs_data.index else 0 + \
-                                                                                                            bs_data.loc[
-                                                                                                                'Share Capital', 'amount'] if 'Share Capital' in bs_data.index else 0 + (
-        bs_data.loc[
-            'Statutory Reserves', 'amount'] if 'Statutory Reserves' in bs_data.index else 0)
+                 (bs_data.loc[
+                      'Property, Plant  & Equipment', 'amount'] if 'Property, Plant  & Equipment' in bs_data.index else 0) + \
+                 (bs_data.loc[
+                      'Right of use Asset', 'amount'] if 'Right of use Asset' in bs_data.index else 0)
+    equity: float = (bs_data.loc['Retained Earnings', 'amount'] if 'Retained Earnings' in bs_data.index else 0) + \
+                    (bs_data.loc['Share Capital', 'amount'] if 'Share Capital' in bs_data.index else 0) + \
+                    (bs_data.loc['Statutory Reserves', 'amount'] if 'Statutory Reserves' in bs_data.index else 0)
     cl: float = bs_data.loc['Accounts Payables', 'amount'] + bs_data.loc['Accruals & Other Payables', 'amount'] + \
                 bs_data.loc[
                     'Due To Related Parties', 'amount'] + (bs_data.loc[
                                                                'Short Term Bank Facilities', 'amount'] if 'Short Term Bank Facilities' in bs_data.index else 0)
-    ncl: float = bs_data.loc['Provisions', 'amount'] + bs_data.loc[
-        'Lease Liabilities', 'amount'] if 'Lease Liabilities' in bs_data.index else 0
+    ncl: float = bs_data.loc['Provisions', 'amount'] + (bs_data.loc[
+                                                            'Lease Liabilities', 'amount'] if 'Lease Liabilities' in bs_data.index else 0)
 
     ta: float = ca + nca
     tl: float = cl + ncl
@@ -1502,7 +1502,7 @@ def main_bs_ratios(document, end_date: datetime, bsdata: pd.DataFrame, pldata: p
     ax1.plot([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in bs_ratios_df['period']], bs_ratios_df['cr'])
     for xy in zip([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in bs_ratios_df['period']],
                   bs_ratios_df['cr'].tolist()):
-        ax1.annotate('{:,.1f}'.format(xy[1]), xy=xy)
+        ax1.annotate('{:,.1f}x'.format(xy[1]), xy=xy)
     tick_locations = ax1.get_yticks()
     ax1.yaxis.set_major_locator(FixedLocator(tick_locations))
     ax1.yaxis.set_major_formatter(FixedFormatter(['{:,.1f}'.format(int(i)) for i in tick_locations]))
@@ -1511,7 +1511,7 @@ def main_bs_ratios(document, end_date: datetime, bsdata: pd.DataFrame, pldata: p
     ax2.plot([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in bs_ratios_df['period']], bs_ratios_df['ato'])
     for xy in zip([datetime.strptime(i, '%Y-%m-%d').strftime('%Y') for i in bs_ratios_df['period']],
                   bs_ratios_df['ato'].tolist()):
-        ax2.annotate('{:,.1f}'.format(xy[1]), xy=xy)
+        ax2.annotate('{:,.1f}x'.format(xy[1]), xy=xy)
     tick_locations = ax2.get_yticks()
     ax2.yaxis.set_major_locator(FixedLocator(tick_locations))
     ax2.yaxis.set_major_formatter(FixedFormatter(['{:,.1f}'.format(int(i)) for i in tick_locations]))
@@ -2088,11 +2088,8 @@ def revenue_dashboard_two(document, df_rev: dict, welcome_info: dict, refined_da
     fig_sales, (new_existing, salesman_wise, col_graph) = plt.subplots(nrows=3, ncols=1, sharex=True)
     fig_sales.set_figheight(7)
     fig_sales.set_figwidth(10.5)
-
-    # if welcome_info['database'] == 'elite_security':
     new_or_old: pd.DataFrame = df_rev['new_or_old'].groupby(['invoice_date', 'new_or_old'])['amount'].sum().unstack(
         fill_value=0)
-
     inv_emp: pd.DataFrame = df_rev['inv_emp']
     demp: pd.DataFrame = refined_data['dEmployee'].copy().reset_index()
     inv_emp = pd.merge(left=inv_emp, right=demp[['emp_name', 'emp_id']], on='emp_id', how='left')
@@ -2213,15 +2210,24 @@ def toc_customer(document, fInvoices: pd.DataFrame, end_date, credit_rating: pd.
                                                                                       month=end_date.month, day=1)) & (
                                                        fInvoices['invoice_date'] <= end_date), 'cus_name'].unique())
     if database == 'nbn_logistics':
-        df_toc_cust: pd.DataFrame = pd.DataFrame({'Customer Name': customer_list})
-        df_toc_cust = pd.concat([df_toc_cust, credit_rating[['Rating']]], axis=1)
-        df_toc_cust = df_toc_cust.sort_values(by='Rating', ascending=False).reset_index(drop=True)
+
+        df_toc_cust = credit_rating
+        df_toc_cust.reset_index(inplace=True)
+        df_toc_cust = df_toc_cust[['Customer Name', f'{end_date.date()}']]
+        # df_toc_cust: pd.DataFrame = pd.DataFrame({'Customer Name': customer_list})
+
+        # df_toc_cust = pd.concat([df_toc_cust, credit_rating[[f'{end_date.date()}']]], axis=1)
+
+        df_toc_cust = df_toc_cust.sort_values(by=f'{end_date.date()}', ascending=False).reset_index(drop=True)
+
+        df_toc_cust = df_toc_cust.loc[(df_toc_cust[f'{end_date.date()}'] != 0)]
+
+        df_toc_cust.dropna(subset=[f'{end_date.date()}'], inplace=True)
         tbl_cust_toc = document.add_table(rows=1, cols=3)
         heading_cells = tbl_cust_toc.rows[0].cells
         heading_cells[0].text = 'Page #'
         heading_cells[1].text = 'Customer Name'
         heading_cells[2].text = 'Rating'
-
         for idx, j in df_toc_cust.iterrows():
             cells = tbl_cust_toc.add_row().cells
             cells[0].text = str(idx + 1)
@@ -2232,10 +2238,10 @@ def toc_customer(document, fInvoices: pd.DataFrame, end_date, credit_rating: pd.
         for row in tbl_cust_toc.rows:
             for idx, width in enumerate(widths):
                 row.cells[idx].width = width
-
         table_formatter(table_name=tbl_cust_toc, style_name='table_style_1', special=[])
 
         for row in tbl_cust_toc.rows[1:]:
+
             value = row.cells[2].text
             value: float = float(value.replace(',', ''))
             if value >= 75_000:
@@ -2249,8 +2255,10 @@ def toc_customer(document, fInvoices: pd.DataFrame, end_date, credit_rating: pd.
             shade_obj = OxmlElement('w:shd')
             shade_obj.set(qn('w:fill'), colour)
             table_cell_properties.append(shade_obj)
+        document.add_page_break()
+        problematic_customers(document=document, end_date=end_date, rating=credit_rating)
 
-    elif database == 'elite_security':
+    elif database in ['elite_security', 'premium']:
         tbl_cust_toc = document.add_table(rows=1, cols=2)
         heading_cells = tbl_cust_toc.rows[0].cells
         heading_cells[0].text = 'Customer Name'
@@ -2304,8 +2312,10 @@ def settlement_days(invoices: list, fCollection: pd.DataFrame, end_date: datetim
 def cust_ageing(customers: list, dCustomer: pd.DataFrame, fCollection: pd.DataFrame, end_date: datetime,
                 database: str) -> dict:
     if database == 'nbn_logistics':
+        pattern = r'^[A-Z]{0,2}NL-\d{2}-\d{4}[A-Z]?$'
         filt = ((fCollection['ledger_code'] < 2000000000) & (~fCollection['ledger_code'].isin([1020201055])) & (
-            fCollection['invoice_number'].str.contains('NBL/IVL|NBL/PIV|NBL/JV|NBL/CN')) &
+                (fCollection['invoice_number'].str.contains('NBL/IVL|NBL/PIV|NBL/JV|NBL/CN')) | (
+            fCollection['invoice_number'].str.match(pat=pattern))) &
                 (fCollection['invoice_date'] <= end_date))
         fCollection = fCollection.loc[filt]
     customer_balance: dict = {'balance_detailed': {}, 'outstanding_df': {}, 'settled_invoices': {}}
@@ -2327,6 +2337,7 @@ def cust_ageing(customers: list, dCustomer: pd.DataFrame, fCollection: pd.DataFr
         inv_value_list: list = []
         age_bracket_list: list = []
         invoice_number: list = []
+        invoice_number_settled: list = []
         invoice_date: list = []
         settled_date: list = []
         invoice_amount: list = []
@@ -2342,6 +2353,7 @@ def cust_ageing(customers: list, dCustomer: pd.DataFrame, fCollection: pd.DataFr
                         cust_soa['voucher_date'] <= end_date), 'voucher_amount'].sum()
             inv_value: float = cust_soa.loc[(cust_soa['invoice_number'] == invoice), 'invoice_amount'].iloc[0]
             if (inv_value - total_collection) != 0:
+                invoice_number_settled.append(invoice)
                 inv_value_list.append(inv_value - total_collection)
                 days_passed: int = (
                         end_date - cust_soa.loc[(cust_soa['invoice_number'] == invoice), 'invoice_date'].iloc[
@@ -2367,7 +2379,8 @@ def cust_ageing(customers: list, dCustomer: pd.DataFrame, fCollection: pd.DataFr
         settled_invoices: pd.DataFrame = pd.DataFrame(
             data={'invoice_number': invoice_number, 'invoice_date': invoice_date, 'settled_date': settled_date,
                   'invoice_amount': invoice_amount})
-        balance_detailed: pd.DataFrame = pd.DataFrame(data={'amount': inv_value_list, 'Age Bracket': age_bracket_list})
+        balance_detailed: pd.DataFrame = pd.DataFrame(
+            data={'invoice_number': invoice_number_settled, 'amount': inv_value_list, 'Age Bracket': age_bracket_list})
         outstanding_df: pd.DataFrame = pd.DataFrame(
             data={'amount': inv_value_list, 'Age Bracket': age_bracket_list}).groupby(by='Age Bracket').sum()
         if not outstanding_df.empty:
@@ -2460,7 +2473,7 @@ def customer_ratios(customers: list, fInvoices: pd.DataFrame, end_date: datetime
             customer_code: list = dCustomer.loc[dCustomer['cus_name'] == customer, 'customer_code'].tolist()
             gross_rev: pd.DataFrame = fLogInv.loc[
                 (fLogInv['invoice_date'] >= datetime(year=end_date.year, month=1, day=1)) & (
-                        fLogInv['customer_code'].isin(customer_code)), ['invoice_date', 'amount']]
+                    fLogInv['customer_code'].isin(customer_code)), ['invoice_date', 'amount']]
             gross_rev: pd.DataFrame = gross_rev.groupby(by='invoice_date', as_index=False)['amount'].sum()
             gross_rev.rename(columns={'amount': 'Gross Rev', 'invoice_date': 'Month'}, inplace=True)
             gross_rev.set_index(keys='Month', inplace=True)
@@ -2774,7 +2787,9 @@ def overhead_allocation_nbnl(row, overhead_monthly: pd.DataFrame, overall_rev: p
 
 def job_profitability(fTimesheet: pd.DataFrame, fGL: pd.DataFrame, end_date: datetime, dEmployee: pd.DataFrame,
                       dExclude: pd.DataFrame, fOT: pd.DataFrame, fInvoices: pd.DataFrame, cogs_map: dict,
-                      dJobs: pd.DataFrame, database, fData: pd.DataFrame) -> pd.DataFrame:
+                      dJobs: pd.DataFrame, database, fData: pd.DataFrame, fMI: pd.DataFrame) -> dict:
+    emp_master:pd.DataFrame = dEmployee.copy()
+    emp_master.set_index(keys='emp_id',inplace=True)
     start_date: datetime = datetime(year=end_date.year, month=1, day=1)
     periods: list = pd.date_range(start=start_date, end=end_date, freq='ME').to_pydatetime().tolist()
     fGL = fGL.loc[:,
@@ -2786,10 +2801,14 @@ def job_profitability(fTimesheet: pd.DataFrame, fGL: pd.DataFrame, end_date: dat
     nbnl_profitability = None
 
     if database in ['elite_security', 'premium']:
-        fGL = fGL.loc[~fGL['ledger_code'].isin([5010101002, 5010101003])]
-        emp_list_full: list = dEmployee.index.tolist()
-        driversandcleaners: list = dEmployee.loc[
-            dEmployee['designation'].isin(['HEAVY DRIVER', 'DRIVER', 'CAMP SUPERVISOR'])].index.tolist()
+        if database == 'elite_security':
+            # excluding Direct Cost - Normal OT and Direct Cost - Holiday OT as balances in those ledgers are treated separately.
+            fGL = fGL.loc[~fGL['ledger_code'].isin([5010101002, 5010101003])]
+        else:
+            fGL = fGL.loc[~fGL['ledger_code'].isin([5010101006, 5010101007])]
+        emp_list_full: list = emp_master.index.tolist()
+        driversandcleaners: list = emp_master.loc[
+            emp_master['designation'].isin(['HEAVY DRIVER', 'DRIVER', 'CAMP SUPERVISOR'])].index.tolist()
         emp_list: list = [i for i in emp_list_full if i not in driversandcleaners]
         timesheet_sum: dict = {'dc_emp_beni': None, 'dc_trpt': None, 'dc_out': None, 'dc_sal': None}
         timesheet_jobs: dict = {'dc_emp_beni': None, 'dc_trpt': None, 'dc_out': None, 'dc_sal': None}
@@ -2797,40 +2816,64 @@ def job_profitability(fTimesheet: pd.DataFrame, fGL: pd.DataFrame, end_date: dat
         periodic_allocation: dict = {}
 
         for period in periods:
+            consumable: dict = \
+            fMI.loc[fMI['voucher_date'] == period, ['order_id', 'amount']].groupby(by='order_id', as_index=True)[
+                'amount'].sum().to_dict()
             st_date: datetime = period + relativedelta(day=1)
             fGL_fitlered: pd.DataFrame = fGL.loc[(fGL['voucher_date'] >= st_date) & (fGL['voucher_date'] <= period) &
                                                  (fGL['second_level'] == 'Manpower Cost'), ['cost_center',
                                                                                             'voucher_date',
                                                                                             'ledger_code',
                                                                                             'amount']]
-            fGL_emp: pd.DataFrame = fGL_fitlered.loc[fGL_fitlered['cost_center'].isin(emp_list)]
+            fGL_emp: pd.DataFrame = fGL_fitlered.loc[fGL_fitlered['cost_center'].isin(emp_list)].groupby(
+                by=['cost_center', 'voucher_date', 'ledger_code'], as_index=False)['amount'].sum()
             fGL_other: pd.DataFrame = \
                 fGL_fitlered.loc[~fGL_fitlered['cost_center'].isin(emp_list), ['amount', 'ledger_code']].groupby(
                     'ledger_code',
                     as_index=False)[
                     'amount'].sum()
-            fGL_emp = fGL_emp.groupby(by=['cost_center', 'voucher_date', 'ledger_code'], as_index=False)['amount'].sum()
             fGL_emp = fGL_emp.loc[fGL_emp['amount'] != 0]
             # TODO You may group this to cogs map using the ledger code. to be fixed. it will reduce the no of iteretion by approx 12.5%
             fTimesheet_filtered: pd.DataFrame = fTimesheet.loc[
                 (fTimesheet['v_date'] >= st_date) & (fTimesheet['v_date'] <= period)]
+            # count of each combination 
+            #     cost_center      order_id     v_date  count
+            # 0       PH00001  Annual Leave 2024-01-31     28
+            # 1       PH00001  Unpaid Leave 2024-01-31      1
+            # 2       PH00001     WK-Worked 2024-01-31      2
+            # 3       PH00002        OF-Off 2024-01-31      4
+            # 4       PH00002  PH/CTR220002 2024-01-31     27
             fTimesheet_filtered = fTimesheet_filtered.groupby(['cost_center', 'order_id', 'v_date']).size().reset_index(
                 name='count')
             billable_jobs: list = fTimesheet_filtered.loc[
-                fTimesheet_filtered['order_id'].str.contains('ESS/CTR'), 'order_id'].unique().tolist()
-
+                fTimesheet_filtered['order_id'].str.contains('ESS/CTR|PH/CTR'), 'order_id'].unique().tolist()
             for c in dExclude.columns:
                 if c not in ['job_type', 'group']:
                     valid_jobs: list = dExclude.loc[dExclude[c] == False]['job_type'].tolist() + billable_jobs
                     timesheet_sum[c] = \
                         fTimesheet_filtered.loc[fTimesheet_filtered['order_id'].isin(valid_jobs)].groupby(
                             ['cost_center', 'v_date'], as_index=False)['count'].sum()
+                    #     cost_center     v_date  count
+                    # 0       PH00001 2024-01-31     31
+                    # 1       PH00002 2024-01-31     31
+                    # 2       PH00003 2024-01-31     31
+                    # 3       PH00004 2024-01-31     31
+                    # 4       PH00007 2024-01-31     31
                     timesheet_jobs[c] = fTimesheet_filtered.loc[fTimesheet_filtered['order_id'].isin(valid_jobs)]
+                    #     cost_center      order_id     v_date  count
+                    # 0       PH00001  Annual Leave 2024-01-31     28
+                    # 1       PH00001  Unpaid Leave 2024-01-31      1
+                    # 2       PH00001     WK-Worked 2024-01-31      2
+                    # 3       PH00002        OF-Off 2024-01-31      4
+                    # 4       PH00002  PH/CTR220002 2024-01-31     27
                     timesheet_grand_sum[c] = timesheet_sum[c]['count'].sum()
+
             allocation_dict: dict = {}
+            allocation_dict = allocation_dict | consumable
             unallocated_amount: float = 0
             for _, i in fGL_emp.iterrows():
-                df_type: str = [(k, v) for k, v in cogs_map.items() if i['ledger_code'] in v][0][0]
+                df_type: str = next((ledger_type for ledger_type, values in cogs_ledger_map[database].items() if
+                                     i['ledger_code'] in values))
                 # TODO (a) YOU MAY FILTER df_sum/timesheet_sum and timesheet_detailed/timesheet_jobs only for those cost_centers apperiring in fGL_Emp. which will reduce the number of iterations.
                 # Also filter by the ledger as well 
                 df_sum: pd.DataFrame = timesheet_sum[df_type]
@@ -2847,6 +2890,7 @@ def job_profitability(fTimesheet: pd.DataFrame, fGL: pd.DataFrame, end_date: dat
                         allocation_dict_init[j['order_id']] = allocated
                     allocation_dict = {k: allocation_dict_init.get(k, 0) + allocation_dict.get(k, 0) for k in
                                        set(allocation_dict) | set(allocation_dict_init)}
+
                 except IndexError:
                     unallocated_amount += i['amount']
                     allocation_dict['Un-Allocated'] = unallocated_amount
@@ -2860,8 +2904,10 @@ def job_profitability(fTimesheet: pd.DataFrame, fGL: pd.DataFrame, end_date: dat
                 'order_id')['amount'].sum().to_dict()
             allocation_dict = {k: allocation_dict.get(k, 0) + inv_filtered_cust.get(k, 0) for k in
                                set(allocation_dict) | set(inv_filtered_cust)}
-            for i in cogs_map:
-                z: float = fGL_other.loc[fGL_other['ledger_code'].isin(cogs_map[i])]['amount'].sum()
+
+
+            for i in cogs_map[database]:
+                z: float = fGL_other.loc[fGL_other['ledger_code'].isin(cogs_map[database][i])]['amount'].sum()
                 if z != 0:
                     for _, row in timesheet_jobs[i].groupby(by='order_id', as_index=False)['count'].sum().iterrows():
                         overhead_allocation: dict = {}
@@ -2869,6 +2915,7 @@ def job_profitability(fTimesheet: pd.DataFrame, fGL: pd.DataFrame, end_date: dat
                         overhead_allocation[row['order_id']] = value
                         allocation_dict = {k: allocation_dict.get(k, 0) + overhead_allocation.get(k, 0) for k in
                                            set(allocation_dict) | set(overhead_allocation)}
+
             acc_types: list = dExclude.loc[dExclude['group'].isin(['Accommodation']), 'job_type'].tolist()
             accommodation_cost: float = sum([v for k, v in allocation_dict.items() if k in acc_types])
             non_accomo_sum: int = fTimesheet_filtered.loc[~fTimesheet_filtered['order_id'].isin(acc_types)][
@@ -2881,11 +2928,13 @@ def job_profitability(fTimesheet: pd.DataFrame, fGL: pd.DataFrame, end_date: dat
                 allocation_dict = {k: allocation_dict.get(k, 0) + accommodation_allocation.get(k, 0) for k in
                                    set(allocation_dict) | set(accommodation_allocation)}
 
+
             if 'AC-ACCOMODATION' in allocation_dict:
                 del allocation_dict['AC-ACCOMODATION']
 
             if 'AC' in allocation_dict:
                 del allocation_dict['AC']
+
             periodic_allocation[period] = allocation_dict
 
         cy_cp: pd.DataFrame = pd.DataFrame(list(periodic_allocation[end_date].items()), columns=['order_id', 'amount'])
@@ -3065,7 +3114,8 @@ def salespersonstats(document, salesperson_list: list, dEmployee: pd.DataFrame, 
 def customer_specifics(document, fInvoices: pd.DataFrame, end_date: datetime, dCustomer: pd.DataFrame,
                        dJobs: pd.DataFrame, path, fCollection: pd.DataFrame, dEmployee: pd.DataFrame,
                        fTimesheet: pd.DataFrame, fOT: pd.DataFrame, dExclude: pd.DataFrame, fGL: pd.DataFrame,
-                       database: str, fData: pd.DataFrame, fLogInv: pd.DataFrame):
+                       database: str, fData: pd.DataFrame, fLogInv: pd.DataFrame, fMI: pd.DataFrame):
+
     customer_list: list = sorted(fInvoices.loc[(fInvoices['invoice_date'] >= datetime(year=end_date.year,
                                                                                       month=end_date.month, day=1)) & (
                                                        fInvoices['invoice_date'] <= end_date), 'cus_name'].unique())
@@ -3074,17 +3124,20 @@ def customer_specifics(document, fInvoices: pd.DataFrame, end_date: datetime, dC
                                           database=database, fLogInv=fLogInv)
     profitability: dict = job_profitability(fTimesheet=fTimesheet, fGL=fGL, end_date=end_date, dEmployee=dEmployee,
                                             dExclude=dExclude, fOT=fOT, fInvoices=fInvoices, cogs_map=cogs_ledger_map,
-                                            dJobs=dJobs, database=database, fData=fData)
+                                            dJobs=dJobs, database=database, fData=fData, fMI=fMI)
     profitability['customer_info'] = customer_info
     heading_format = {'fontfamily': 'Georgia', 'color': 'k', 'fontweight': 'bold', 'fontsize': 10}
     cy_cp_profit_cus: pd.DataFrame = profitability['cy_cp_cus']
+    cy_cp_profit_cus.to_csv('cy_cp_profit_cus.csv')
     cy_ytd_profit_cus: pd.DataFrame = profitability['cy_ytd_cus']
+    cy_ytd_profit_cus.to_csv('cy_ytd_profit_cus.csv')
     cy_cp_net_profit_cus: pd.DataFrame = profitability['cy_cp_cus_np']
     cy_ytd_net_profit_cus: pd.DataFrame = profitability['cy_ytd_cus_np']
     rating = None
     if database == 'nbn_logistics':
         rating: pd.DataFrame = credit_rating(fInvoices=fInvoices, end_date=end_date, fCollection=fCollection,
-                                             profitability=profitability, dCustomer=dCustomer, fGL=fGL)
+                                             profitability=profitability, dCustomer=dCustomer, fGL=fGL,
+                                             database=database)
     toc_customer(document=document, end_date=end_date, fInvoices=fInvoices, credit_rating=rating, database=database)
     document.add_page_break()
     for customer in customer_list:
@@ -3168,7 +3221,7 @@ def customer_specifics(document, fInvoices: pd.DataFrame, end_date: datetime, dC
         if database == 'elite_security':
             tbl_cust_col_td.cells[0].text = number_format(customer_info[customer]['credit_score'])
         elif database == 'nbn_logistics':
-            credit_rate: float = rating.loc[rating['Customer Name'] == customer, 'Rating'].iloc[0]
+            credit_rate: float = rating.loc[rating['Customer Name'] == customer, f'{end_date.date()}'].iloc[0]
             tbl_cust_col_td.cells[0].text = number_format(credit_rate)
             if credit_rate >= 75_000:
                 colour = 'd2f3cf'
@@ -3275,7 +3328,7 @@ def customer_specifics(document, fInvoices: pd.DataFrame, end_date: datetime, dC
                 in monthly_rev.values],
                 colLabels=monthly_rev.columns, cellLoc='center', loc='center',
                 colColours=['#F8CBAD' for i in monthly_rev.columns])
-        elif database == 'elite_security':
+        elif database in ['elite_security', 'premium']:
             total_row: pd.DataFrame = pd.DataFrame(data={'Month': ['Total'], 'Net Rev': [monthly_rev['Net Rev'].sum()]})
             monthly_rev = pd.concat([monthly_rev, total_row], ignore_index=True)
             rev_tbl.table(
@@ -4183,7 +4236,7 @@ def established_points(customer_code: str, end_date: datetime, ESTABLISHED_SINCE
     return established_brackets(no_of_months=period_worked_months) * ESTABLISHED_SINCE_POINTS / 5
 
 
-def age_points(row: int) -> int:
+def age_points(row: int, weight: list) -> int:
     """Based on overdue days for each voucher points will be allocated. Overdue days are after credit period.
 
     Args:
@@ -4195,29 +4248,29 @@ def age_points(row: int) -> int:
     bracket: str = row['Age Bracket']
     amount: float = row['amount']
     if bracket == 'Not Due':
-        return 10 * amount
+        return weight[0] * amount
     if bracket == '1-30':
-        return 9 * amount
+        return weight[1] * amount
     if bracket == '31-60':
-        return 8 * amount
+        return weight[2] * amount
     if bracket == '61-90':
-        return 7 * amount
+        return weight[3] * amount
     if bracket == '91-120':
-        return 6 * amount
+        return weight[4] * amount
     if bracket == '121-150':
-        return 5 * amount
+        return weight[5] * amount
     if bracket == '151-180':
-        return 4 * amount
+        return weight[6] * amount
     if bracket == '181-210':
-        return 3 * amount
+        return weight[7] * amount
     if bracket == '211-240':
-        return 2 * amount
+        return weight[8] * amount
     if bracket == '241-270':
-        return 1 * amount
-    return 0 * amount
+        return weight[9] * amount
+    return weight[10] * amount
 
 
-def points_for_settlement(row: int) -> int:
+def points_for_settlement(row: int, weight: list) -> int:
     """This function uses days taken to settle the invoice in full, returned by function days_taken_to_settle
 
     Args:
@@ -4228,33 +4281,37 @@ def points_for_settlement(row: int) -> int:
     """
     days_taken: int = row['days']
     invoice_amount: float = row['invoice_amount']
+    if days_taken <= 0:  # if the invoice was settled within credit period.
+        return weight[0] * invoice_amount
     if days_taken <= 30:
-        return 10 * invoice_amount
+        return weight[1] * invoice_amount
     if days_taken <= 60:
-        return 9 * invoice_amount
+        return weight[2] * invoice_amount
     if days_taken <= 90:
-        return 8 * invoice_amount
+        return weight[3] * invoice_amount
     if days_taken <= 120:
-        return 7 * invoice_amount
+        return weight[4] * invoice_amount
     if days_taken <= 150:
-        return 6 * invoice_amount
+        return weight[5] * invoice_amount
     if days_taken <= 180:
-        return 5 * invoice_amount
+        return weight[6] * invoice_amount
     if days_taken <= 210:
-        return 4 * invoice_amount
+        return weight[7] * invoice_amount
     if days_taken <= 240:
-        return 3 * invoice_amount
+        return weight[8] * invoice_amount
     if days_taken <= 270:
-        return 2 * invoice_amount
-    if days_taken <= 300:
-        return 1 * invoice_amount
-    return 0 * invoice_amount
+        return weight[9] * invoice_amount
+    return weight[10] * invoice_amount
 
 
 def credit_rating(fInvoices: pd.DataFrame, end_date: datetime, fCollection: pd.DataFrame, profitability: dict,
-                  dCustomer: pd.DataFrame, fGL: pd.DataFrame):
+                  dCustomer: pd.DataFrame, fGL: pd.DataFrame, database: str):
+    start_date = end_date - relativedelta(months=15)
+    periods: list = pd.date_range(start=start_date, end=end_date, freq='ME').to_pydatetime().tolist()
+    master: pd.DataFrame = pd.DataFrame()
+    final_report: pd.DataFrame = pd.DataFrame()
     OFFSET_MONTHS = relativedelta(months=6)
-    month_start_date = datetime(year=end_date.year, month=end_date.month, day=1)
+
     # Weightage assigned to each parameter
     SETTLEMENT_POINTS: int = 30_000  # Weight allocated for time taken to settle invoices in full
     AGE_BRACKET_POINTS: int = 20_000  # Weight allocated for each voucher based on their overdue days
@@ -4263,65 +4320,144 @@ def credit_rating(fInvoices: pd.DataFrame, end_date: datetime, fCollection: pd.D
     GP_GENERATED_POINTS: int = 35_000
     ESTABLISHED_SINCE_POINTS: int = 5_000  # Weight allocated for the period passed since the incorporation
     WORKED_SINCE: int = 10_000
-    first_date: pd.DataFrame = first_working_date(end_date=end_date, fCollection=fCollection,
-                                                  OFFSET_MONTHS=OFFSET_MONTHS)
 
-    customer_list: list = sorted(fInvoices.loc[(fInvoices['invoice_date'] >= datetime(year=end_date.year,
-                                                                                      month=end_date.month, day=1)) & (
-                                                       fInvoices['invoice_date'] <= end_date), 'cus_name'].unique())
+    for period in periods:
+        month_start_date = datetime(year=period.year, month=period.month, day=1)
+        first_date: pd.DataFrame = first_working_date(end_date=period, fCollection=fCollection,
+                                                      OFFSET_MONTHS=OFFSET_MONTHS)
+        customer_list: list = sorted(fInvoices.loc[(fInvoices['invoice_date'] >= month_start_date) & (
+                fInvoices['invoice_date'] <= period), 'cus_name'].unique())
+        nbnl_profitability: pd.DataFrame = profitability['nbnl_profitability']
+        nbnl_profitability = nbnl_profitability.loc[
+            (nbnl_profitability['voucher_date'] <= period) & (nbnl_profitability['voucher_date'] >= month_start_date), [
+                'customer_code', 'amount', 'total_rev']]
+        settlement_duration: list = []
+        age_bracket: list = []
+        gp_generated: list = []
+        established_since: list = []
+        worked_since: list = []
+        weight: list = [i[1] / i[0] for i in
+                        tuple(zip([1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144], [i for i in reversed(range(11))]))]
+        customer_list: list = sorted(fInvoices.loc[(fInvoices['invoice_date'] >= month_start_date) & (
+                fInvoices['invoice_date'] <= period), 'cus_name'].unique())
+        cust_ageing_summary: dict = cust_ageing(customers=customer_list, dCustomer=dCustomer, end_date=period,
+                                                fCollection=fCollection, database=database)
+        for idx, customer in enumerate(customer_list):
+            customer_code: str = dCustomer.loc[dCustomer['cus_name'] == customer, 'customer_code'].iloc[0].split('-')[0]
+            ledger_code: list = dCustomer.loc[dCustomer['cus_name'] == customer, 'ledger_code'].tolist()
+            credit_days: int = dCustomer.loc[dCustomer['cus_name'] == customer, 'credit_days'].iloc[0]
+            profit: float = nbnl_profitability.loc[nbnl_profitability['customer_code'] == customer_code, 'amount'].sum()
+            gross_revenue: float = fCollection.loc[
+                (fCollection['invoice_date'] >= month_start_date) & (fCollection['invoice_date'] <= period) & (
+                    fCollection['ledger_code'].isin(ledger_code)), ['invoice_number',
+                                                                    'invoice_amount']].drop_duplicates(
+                keep='first', ignore_index=True)['invoice_amount'].sum()
+            profit_pct = max(0, min((profit / gross_revenue), 1))
+            gp_generated.insert(idx, profit_pct * GP_GENERATED_POINTS)
+            ageing_detailed: pd.DataFrame = cust_ageing_summary['balance_detailed'][customer]
+            ageing_detailed.loc[:, 'balance'] = ageing_detailed.apply(age_points, axis=1, args=[weight])
 
-    nbnl_profitability: pd.DataFrame = profitability['nbnl_profitability']
-    nbnl_profitability = nbnl_profitability.loc[
-        (nbnl_profitability['voucher_date'] <= end_date) & (nbnl_profitability['voucher_date'] >= month_start_date), [
-            'customer_code', 'amount', 'total_rev']]
-    settlement_duration: list = []
-    age_bracket: list = []
-    gp_generated: list = []
-    established_since: list = []
-    worked_since: list = []
-    for idx, customer in enumerate(customer_list):
-        customer_code: str = dCustomer.loc[dCustomer['cus_name'] == customer, 'customer_code'].iloc[0].split('-')[0]
-        ledger_code: list = dCustomer.loc[dCustomer['cus_name'] == customer, 'ledger_code'].tolist()
-        credit_days: int = dCustomer.loc[dCustomer['cus_name'] == customer, 'credit_days'].iloc[0]
-        profit: float = nbnl_profitability.loc[nbnl_profitability['customer_code'] == customer_code, 'amount'].sum()
-        gross_revenue: float = fCollection.loc[
-            (fCollection['invoice_date'] >= month_start_date) & (fCollection['invoice_date'] <= end_date) & (
-                        fCollection['ledger_code'].isin(ledger_code)), ['invoice_number', 'invoice_amount']].drop_duplicates(
-            keep='first', ignore_index=True)['invoice_amount'].sum()
-        print(f'{customer}:{profit}:{gross_revenue}')
-        profit_pct = max(0, min((profit / gross_revenue), 1))
-        gp_generated.insert(idx, profit_pct * GP_GENERATED_POINTS)
-        ageing_detailed: pd.DataFrame = profitability['customer_info'][customer]['ageing_detailed']
-        ageing_detailed.loc[:, 'balance'] = ageing_detailed.apply(age_points, axis=1)
-        total_balance: float = ageing_detailed['amount'].sum() * 10
-        receivable_points: float = ageing_detailed['balance'].sum() / total_balance * AGE_BRACKET_POINTS
-        settled_invoices: pd.DataFrame = profitability['customer_info'][customer]['settled_invoices']
-        if not settled_invoices.empty:
+            total_balance: float = ageing_detailed['amount'].sum() * 10
+            receivable_points: float = ageing_detailed['balance'].sum() / total_balance * AGE_BRACKET_POINTS
+            settled_invoices: pd.DataFrame = cust_ageing_summary['settled_invoices'][customer]
+            if not settled_invoices.empty:
 
-            settled_invoices.loc[:, 'days'] = (
-                                                      settled_invoices['settled_date'] - settled_invoices[
-                                                  'invoice_date']).dt.days - credit_days
-            settled_invoices.loc[:, 'points'] = settled_invoices.apply(points_for_settlement, axis=1)
-            settlement_duration_points: float = settled_invoices['points'].sum() / (
-                    settled_invoices['invoice_amount'].sum() * 10) * SETTLEMENT_POINTS
+                settled_invoices.loc[:, 'days'] = (
+                                                          settled_invoices['settled_date'] - settled_invoices[
+                                                      'invoice_date']).dt.days - credit_days
+                settled_invoices.loc[:, 'points'] = settled_invoices.apply(points_for_settlement, axis=1, args=[weight])
+                settlement_duration_points: float = settled_invoices['points'].sum() / (
+                        settled_invoices['invoice_amount'].sum() * 10) * SETTLEMENT_POINTS
 
+            else:
+                if ageing_detailed.loc[ageing_detailed['Age Bracket'] == 'Not Due', 'amount'].iloc[0] / ageing_detailed[
+                    'amount'].sum() == 1:
+                    settlement_duration_points = SETTLEMENT_POINTS
+                else:
+                    settlement_duration_points: float = 0
+
+            established_since.insert(idx, established_points(end_date=period, customer_code=customer_code,
+                                                             ESTABLISHED_SINCE_POINTS=ESTABLISHED_SINCE_POINTS,
+                                                             dCustomer=dCustomer, fGL=fGL))
+            worked_since.insert(idx,
+                                worked_since_points(end_date=period, ledger_code=ledger_code, first_date=first_date,
+                                                    WORKED_SINCE=WORKED_SINCE))
+            settlement_duration.insert(idx, settlement_duration_points)
+            if total_balance != 0:
+                age_bracket.insert(idx, receivable_points)
+            else:
+                age_bracket.insert(idx, FULLY_SETTLED_POINTS)
+
+        final_report = pd.DataFrame(data={'Customer Name': customer_list, 'Settlement Duration': settlement_duration,
+                                          'Age Bracket': age_bracket, 'GP Generated': gp_generated,
+                                          'Established Since': established_since, 'Worked Since': worked_since})
+        final_report.loc[:, f'{period.date()}'] = final_report['Settlement Duration'] + final_report['Age Bracket'] + \
+                                                  final_report[
+                                                      'GP Generated'] + final_report['Established Since'] + \
+                                                  final_report['Worked Since']
+        final_report_brief: pd.DataFrame = final_report[['Customer Name', f'{period.date()}']]
+        final_report_brief = final_report_brief.set_index(keys='Customer Name')
+        master = pd.concat([master, final_report_brief], axis=1)
+
+    return master
+
+
+def problematic_customers(rating: pd.DataFrame, end_date: datetime, document):
+    start_date = end_date - relativedelta(months=11)
+    df_rating: pd.DataFrame = rating.copy()
+    periods: list = pd.date_range(start=start_date, end=end_date, freq='ME').to_pydatetime().tolist()
+    periods = [i.strftime('%Y-%m-%d') for i in periods]
+    periods.insert(0, 'Customer Name')
+    df_rating.fillna(value=0, inplace=True)
+
+    df_rating.iloc[:, 1:] = df_rating.iloc[:, 1:].applymap(lambda x: '.' if x < 35000  and x > 0 else np.nan)
+    
+    df_rating.reset_index(inplace=True)
+
+    for i, j in df_rating.iterrows():
+        arr = list(j[1:])
+        size = len(arr)
+        for k in range(size - 2):
+            if arr[k] == arr[k + 1] and arr[k + 1] == arr[k + 2] and arr[k + 2] == ".":
+                df_rating.iloc[i, k + 1] = '.'
+
+    df_rating = df_rating[periods]
+    df_rating.dropna(how='all',inplace=True,subset=df_rating.columns[1:])
+    df_rating.fillna('',inplace=True)
+    tbl_cust_pro = document.add_table(rows=1, cols=df_rating.shape[1])
+    tbl_cust_pro.style = 'Table Grid'
+    heading_cells = tbl_cust_pro.rows[0].cells
+    for idx, col in enumerate(df_rating.columns):
+        if col == 'Customer Name':
+            heading_cells[idx].text = 'Name'
         else:
-            settlement_duration_points: float = 0
-        established_since.insert(idx, established_points(end_date=end_date, customer_code=customer_code,
-                                                         ESTABLISHED_SINCE_POINTS=ESTABLISHED_SINCE_POINTS,
-                                                         dCustomer=dCustomer, fGL=fGL))
-        worked_since.insert(idx, worked_since_points(end_date=end_date, ledger_code=ledger_code, first_date=first_date,
-                                                     WORKED_SINCE=WORKED_SINCE))
-        settlement_duration.insert(idx, settlement_duration_points)
-        if total_balance != 0:
-            age_bracket.insert(idx, receivable_points)
-        else:
-            age_bracket.insert(idx, FULLY_SETTLED_POINTS)
+            heading_cells[idx].text = str(datetime.strptime(col,'%Y-%m-%d').strftime('%b'))
 
-    final_report = pd.DataFrame(data={'Customer Name': customer_list, 'Settlement Duration': settlement_duration,
-                                      'Age Bracket': age_bracket, 'GP Generated': gp_generated,
-                                      'Established Since': established_since, 'Worked Since': worked_since})
-    final_report.loc[:, 'Rating'] = final_report['Settlement Duration'] + final_report['Age Bracket'] + final_report[
-        'GP Generated'] + final_report['Established Since'] + final_report['Worked Since']
-    final_report.to_csv('final_report.csv')
-    return final_report
+    for idx, row in df_rating.iterrows():
+        cells = tbl_cust_pro.add_row().cells
+        for j in range(len(row)):
+            if j == 0:
+                cells[0].text = str(row['Customer Name'])
+            else:
+                cells[j].text = str(row.iloc[j])
+
+    table_formatter(table_name=tbl_cust_pro, style_name='table_style_2', special=[])
+
+    for row in tbl_cust_pro.rows[1:]:
+        for c, _ in enumerate(row.cells):
+            value = row.cells[c].text
+            colour = 'FFFFFF'  # White
+            font_colour = RGBColor(0, 0, 0)
+            if value == '.':
+                colour = 'FF0000' # Danger Red
+                font_colour = RGBColor(255, 0, 0)
+            cell_xml_element = row.cells[c]._tc
+            table_cell_properties = cell_xml_element.get_or_add_tcPr()
+            shade_obj = OxmlElement('w:shd')
+            shade_obj.set(qn('w:fill'), colour)
+            table_cell_properties.append(shade_obj)
+
+            run_elements = row.cells[c].paragraphs[0].runs
+            if run_elements:  # Ensure there is at least one run
+                run = run_elements[0]  # Get the first run
+                run.font.color.rgb = font_colour  # Set font color to red

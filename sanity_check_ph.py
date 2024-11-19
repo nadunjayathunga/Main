@@ -23,7 +23,7 @@ dCustomer: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dCustomer',
                                          usecols=['customer_code', 'ledger_code'])
 dEmployee: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dEmployee', usecols=['emp_id'])
 dStock: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='dStock', usecols=['part_number'])
-fOT: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fOT', usecols=['cost_center'])
+fOT: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fOT', usecols=['emp_id'])
 fCC: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCC', usecols=['emp_id'])
 fGL: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fGL', usecols=['ledger_code'])
 fCollection: pd.DataFrame = pd.read_excel(io=file_path, sheet_name='fCollection', usecols=['ledger_code'])
