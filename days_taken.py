@@ -19,36 +19,36 @@ PATH = r'C:\Masters\Data-NBNL.xlsx'
 
 
 df_gl: pd.DataFrame = pd.read_excel(io=PATH, sheet_name='fGL',
-                                    usecols=['Voucher Date', 'Ledger_Code', 'Ledger Name', 'Transaction Type',
-                                             'Voucher Number', 'Debit Amount', 'Fourth Level Group Name']) # for nbnl
+                                    usecols=['voucher_date', 'ledger_code', 'ledger_name', 'transaction_type',
+                                             'voucher_number', 'debit', 'forth_level']) # for nbnl
 # df_gl: pd.DataFrame = pd.read_excel(io=PATH, sheet_name='fGL',
-#                                     usecols=['Voucher Date', 'Ledger_Code', 'Ledger Name', 'Transaction Type',
-#                                              'Voucher Number', 'Debit Amount', 'Fourth Level Group Name']) # for ess
+#                                     usecols=['Voucher Date', 'ledger_code', 'Ledger Name', 'transaction_type',
+#                                              'voucher_number', 'Debit Amount', 'Fourth Level Group Name']) # for ess
 df_collection: pd.DataFrame = pd.read_excel(io=PATH,
-                                            usecols=['Ledger_Code', 'Invoice Number', 'Invoice Amount',
-                                                     'Payment Voucher Number',
-                                                     'Payment Date',
-                                                     'Invoice Date'],
-                                            sheet_name='fCollection', date_format={'Invoice Date': '%d-%b-%y'},
+                                            usecols=['ledger_code', 'invoice_number', 'invoice_amount',
+                                                     'voucher_number',
+                                                     'voucher_date',
+                                                     'invoice_date'],
+                                            sheet_name='fCollection', date_format={'invoice_date': '%d-%b-%y'},
                                             dtype={
-                                                'Payment Voucher Number': 'str'},
-                                            index_col='Invoice Number') # for nbnl
+                                                'voucher_number': 'str'},
+                                            index_col='invoice_number') # for nbnl
 
 # df_collection: pd.DataFrame = pd.read_excel(io=PATH,
-#                                             usecols=['Ledger_Code', 'Invoice Number', 'Invoice Amount',
-#                                                      'Payment Voucher Number',
-#                                                      'Payment Date',
-#                                                      'Invoice Date'],
-#                                             sheet_name='fCollection', date_format={'Invoice Date': '%d-%b-%y'},
+#                                             usecols=['ledger_code', 'Invoice Number', 'invoice_amount',
+#                                                      'voucher_number',
+#                                                      'voucher_date',
+#                                                      'invoice_date'],
+#                                             sheet_name='fCollection', date_format={'invoice_date': '%d-%b-%y'},
 #                                             dtype={
-#                                                 'Payment Voucher Number': 'str'},
+#                                                 'voucher_number': 'str'},
 #                                             index_col='Invoice Number') # for nbnl
 
 
-df_LogInv :pd.DataFrame = pd.read_excel(io=PATH,usecols=['Invoice Date','Customer_Code'],sheet_name='fLogInv')
+df_LogInv :pd.DataFrame = pd.read_excel(io=PATH,usecols=['invoice_date','customer_code'],sheet_name='fLogInv')
 
-# df_dCustomer :pd.DataFrame = pd.read_excel(io=PATH,usecols=['Customer_Code','Cus_Name','Credit_Days','Ledger_Code'],sheet_name='dCustomer') # ESS
-df_dCustomer :pd.DataFrame = pd.read_excel(io=PATH,usecols=['Customer_Code','Cus_Name','Credit_Days','Ledger_Code'],sheet_name='dCustomer') # NBNL
+# df_dCustomer :pd.DataFrame = pd.read_excel(io=PATH,usecols=['customer_code','Cus_Name','Credit_Days','ledger_code'],sheet_name='dCustomer') # ESS
+df_dCustomer :pd.DataFrame = pd.read_excel(io=PATH,usecols=['customer_code','cus_name','credit_days','ledger_code'],sheet_name='dCustomer') # NBNL
 
 
 def days_taken(row) -> int:
@@ -63,65 +63,65 @@ def days_taken(row) -> int:
     voucher_dates: list = []
     voucher_amounts: list = []
     voucher_dates_test: list = []
-    receipts: list = row['Payment Voucher Number'].split(sep=';')
+    receipts: list = row['voucher_number'].split(sep=';')
     voucher_amounts = [float(voucher.split(sep='-')[1]) for voucher in receipts]
-    if isinstance(row['Payment Date'], datetime):
-        voucher_dates.append(row['Payment Date'])
-        voucher_dates_test.append(row['Payment Date'] <= END_DATE)
+    if isinstance(row['voucher_date'], datetime):
+        voucher_dates.append(row['voucher_date'])
+        voucher_dates_test.append(row['voucher_date'] <= END_DATE)
     else:
-        date_string :str = row['Payment Date'].split(sep=',')
+        date_string :str = row['voucher_date'].split(sep=',')
         voucher_dates = [datetime.strptime(date, '%d-%b-%Y') for date in date_string]
         voucher_dates_test = [date <= END_DATE for date in voucher_dates]
 
     total_collected :float = sum(amount for amount, valid in zip(voucher_amounts,voucher_dates_test) if valid)
-    balance : float = row['Invoice Amount'] - total_collected
+    balance : float = row['invoice_amount'] - total_collected
     if balance == 0:
-        return (max(voucher_dates) - row['Invoice Date']).days
+        return (max(voucher_dates) - row['invoice_date']).days
     else:
         return None
 
 
 def report(ledger:int, df_collection:pd.DataFrame)->float:
-        inv_filt = (df_gl['Transaction Type'].isin(VOUCHER_TYPES)) & (df_gl['Ledger_Code'] == ledger) # for nbnl
-        # inv_filt = (df_gl['Transaction Type'].isin(VOUCHER_TYPES)) & (df_gl['Ledger_Code'] == ledger) # for ess
-        invoices_list: list = df_gl.loc[inv_filt, 'Voucher Number'].unique().tolist()
-        # Payment Voucher Number, invoices that has not been paid at all
-        df_collection: pd.DataFrame = df_collection.loc[df_collection['Payment Voucher Number'].notnull()]
+        inv_filt = (df_gl['transaction_type'].isin(VOUCHER_TYPES)) & (df_gl['ledger_code'] == ledger) # for nbnl
+        # inv_filt = (df_gl['transaction_type'].isin(VOUCHER_TYPES)) & (df_gl['ledger_code'] == ledger) # for ess
+        invoices_list: list = df_gl.loc[inv_filt, 'voucher_number'].unique().tolist()
+        # voucher_number, invoices that has not been paid at all
+        df_collection: pd.DataFrame = df_collection.loc[df_collection['voucher_number'].notnull()]
         # out of total invoices raised for the whole period, the invoices that were either fully or partially settled. 
         settled_invoices: list = [invoice for invoice in invoices_list if invoice in df_collection.index]
         df_collection = df_collection.loc[
-        settled_invoices, ['Invoice Amount', 'Payment Voucher Number', 'Payment Date', 'Invoice Date']]
+        settled_invoices, ['invoice_amount', 'voucher_number', 'voucher_date', 'invoice_date']]
 
         if df_collection.empty:
             # for a customer who has not made any payment till date 
-            df_collection['Days_Taken'] = 0
+            df_collection['days_taken'] = 0
         else:
-            df_collection['Days_Taken'] = df_collection.apply(days_taken, axis=1)
-        df_collection = df_collection.loc[df_collection['Days_Taken'].notnull()]
-        df_collection.drop(columns=['Payment Voucher Number', 'Payment Date'], inplace=True)
+            df_collection['days_taken'] = df_collection.apply(days_taken, axis=1)
+        df_collection = df_collection.loc[df_collection['days_taken'].notnull()]
+        df_collection.drop(columns=['voucher_number', 'voucher_date'], inplace=True)
         df_collection.to_csv(f'{ledger}.csv')
-        return df_collection['Days_Taken'].median()
+        return df_collection['days_taken'].median()
 
-ledgers = [1020201049] # do not enter has str. 
+ledgers = [1020201274] # do not enter has str. 
 for ledger in ledgers:
     print(report(ledger=ledger,df_collection=df_collection))
 
 
 def median_days(row)->float:
-     ledger_code :int = row['Ledger_Code'] 
+     ledger_code :int = row['ledger_code'] 
      return report(ledger=ledger_code,df_collection=df_collection)
 
      
 def median_collection_days()->pd.DataFrame:
      start_date :datetime = datetime(year=2024, month=7, day=1)
      end_date :datetime = datetime(year=2024, month=8, day=31)
-     inv_filt = (df_LogInv['Invoice Date'] >= start_date) & (df_LogInv['Invoice Date']<=end_date)
+     inv_filt = (df_LogInv['invoice_date'] >= start_date) & (df_LogInv['invoice_date']<=end_date)
      cust_worked :list = list(set(df_LogInv.loc[inv_filt,'Customer Code'].tolist()))
-     report:pd.DataFrame = pd.DataFrame(data={'Customer_Code':cust_worked})
-     report = pd.merge(left=report,right=df_dCustomer,on='Customer_Code',how='left')
+     report:pd.DataFrame = pd.DataFrame(data={'customer_code':cust_worked})
+     report = pd.merge(left=report,right=df_dCustomer,on='customer_code',how='left')
      report['Actual'] = report.apply(median_days,axis=1)
      report = report.fillna(0)
-     report.drop(columns=['Customer_Code','Ledger_Code'],inplace=True)
+     report.drop(columns=['customer_code','ledger_code'],inplace=True)
      return report
 
 

@@ -1,6 +1,7 @@
 import calendar
 import itertools
 import os
+import re
 import statistics
 import sys
 from datetime import datetime, timedelta
@@ -9,7 +10,6 @@ from itertools import islice
 
 import matplotlib.pyplot as plt
 import numpy as np
-# sys.path.append(r'C:\Users\NadunJayathunga\OneDrive - NBN Holdings\Financials\Other\Programmes\Dashboards\Main')
 import pandas as pd
 from colorama import Fore, init
 from dateutil.relativedelta import relativedelta
@@ -41,7 +41,7 @@ def welcome_page() -> dict:
         try:
             user_input: str = input('Please enter company ID>> ').lower()
             if user_input == 'q':
-                break
+                sys.exit('Thanks for using the programme. See you again.')
             else:
                 user_input: int = int(user_input)
             if user_input < 0 or user_input > no_of_companies - 1:
@@ -64,7 +64,9 @@ def welcome_page() -> dict:
     gl_end: datetime = pd.read_sql_query('SELECT MAX(voucher_date) FROM "fGL"', con=engine).squeeze()
 
     while not proceed:
-        user_input = input("Enter a date (YYYY-MM-DD): ")
+        user_input = input("Enter a date (YYYY-MM-DD): or Q to Quit\n>>")
+        if user_input in ['q', 'Q']:
+            sys.exit('Thanks for using the programme. See you again.')
         try:
             end_date = datetime.strptime(user_input, '%Y-%m-%d')
             if gl_start <= end_date <= gl_end:
@@ -79,10 +81,11 @@ def welcome_page() -> dict:
 
 
 def data_sources(engine, database: str) -> dict:
+    # A view in database is being called whereever read_sql_query method has been used. 
     fGL: pd.DataFrame = pd.read_sql_query(sql=f'SELECT * FROM merged', con=engine)
     fInvoices: pd.DataFrame = pd.read_sql_query(sql=f'SELECT * FROM finvoices', con=engine)
     dJobs: pd.DataFrame = pd.read_sql_query(sql=f'SELECT * FROM djobs', con=engine)
-    dEmployee: pd.DataFrame = pd.read_sql_table(table_name='dEmployee', con=engine, )
+    dEmployee: pd.DataFrame = pd.read_sql_table(table_name='dEmployee', con=engine)
     dCoAAdler: pd.DataFrame = pd.read_sql_table(table_name='dCoAAdler', con=engine)
     dCustomer: pd.DataFrame = pd.read_sql_table(table_name='dCustomer', con=engine)
     fCreditNote: pd.DataFrame = pd.read_sql_table(table_name='fCreditNote', con=engine)
@@ -109,7 +112,8 @@ def data_sources(engine, database: str) -> dict:
                                'fNotInvoiced': fNotInvoiced, 'fSalesTill2020': fSalesTill2020}
         common = common | nbnl_specific
     elif database == 'nbn_realestate':
-        nbnre_specific: dict = {}
+        dRoom: pd.DataFrame = pd.read_sql_table(table_name='dRoom', con=engine)
+        nbnre_specific: dict = {'dRoom': dRoom}
         common = common | nbnre_specific
     else:
         ftimesheet: pd.DataFrame = pd.read_sql_table(table_name='ftimesheet', con=engine)
@@ -119,11 +123,23 @@ def data_sources(engine, database: str) -> dict:
 
 
 def business_unit(row, dEmployee: pd.DataFrame, dCoAAdler: pd.DataFrame, database: str) -> str:
-    if database == 'elite_security':
+    """The purpose of this function is to correct the business unit fGL. Not all the transactions in fGL contains or correctly having a business unit. 
+    allocation of business unit is first done using the ledger_code then using the cost_center
+    Args:
+        row (_type_): a row in fGL dataframe
+        dEmployee (pd.DataFrame): This is required to determine the department to which each employee works
+        dCoAAdler (pd.DataFrame): This is to determine the ledgers exclusively belongs to ELV and Guarindg department
+        database (str): The company name
+
+    Returns:
+        str: ELV-ESS or GUARDING-ESS based on ledger_code value or cost_center value
+    """
+    if database == 'elite_security':  # business_unit_name field in fGL is used only in Elite to prepare division wise P/L.
         elv_groups: list = dCoAAdler.loc[
             dCoAAdler['first_level'].isin(['Material Parts & Consumables - Projects',
                                            'Maintenance - Projects',
-                                           'Others - Projects', 'Projects Revenue']), 'ledger_code'].tolist()
+                                           'Others - Projects',
+                                           'Projects Revenue']), 'ledger_code'].tolist()  # Any transaction posted in the groups mentioned this filter belongs to ELV
 
         ledger_code: str = row['ledger_code']
         cc: str = row['cost_center']
@@ -138,7 +154,6 @@ def business_unit(row, dEmployee: pd.DataFrame, dCoAAdler: pd.DataFrame, databas
 
 
 def receipts_recorded(data: pd.DataFrame, database: str) -> pd.DataFrame:
-    # data['invoice_date'] = pd.to_datetime(data['invoice_date'], errors='coerce')
     # Voucher date is null mean the subject invoice has not been paid at all
     if database == 'nbn_logistics':
         data: pd.DataFrame = data.loc[~data['invoice_number'].str.contains('NBL/JV200072|NBL/JV200073')]
@@ -263,7 +278,7 @@ def preprocessing(data: dict, database: str) -> dict:
         left=fCreditNote, right=dCustomer, on='ledger_code', how='left')
     fBudget = pd.melt(fBudget, id_vars=[
         'fy', 'ledger_code'], var_name='Month', value_name='amount')
-    fBudget['voucher_date'] = fBudget.apply(
+    fBudget.loc[:,'voucher_date'] = fBudget.apply(
         lambda x: pd.to_datetime(f'{x["fy"]}-{x["Month"]}-01') + relativedelta(day=31), axis=1)
     fBudget.drop(columns=['fy', 'Month'], inplace=True)
     fBudget = fBudget.loc[fBudget['amount'] != 0]
@@ -324,8 +339,9 @@ def preprocessing(data: dict, database: str) -> dict:
         ess_specific: dict = {'ftimesheet': ftimesheet, 'fOT': fOT,
                               'dExclude': dExclude, 'fMI': fMI}
         common = common | ess_specific
-    elif database == 'premium':
-        ph_specific: dict = {}
+    elif database == 'nbn_realestate':
+        dRoom: pd.DataFrame = data['dRoom']
+        ph_specific: dict = {'dRoom': dRoom}
         common = common | ph_specific
     elif database == 'nbn_logistics':
         fLogInv: pd.DataFrame = data['fLogInv']
@@ -376,7 +392,7 @@ def first_page(document, report_date: datetime, abbr: str, long_name: str):
     return document
 
 
-def closing(document, abbr: str,end_date:datetime):
+def closing(document, abbr: str, end_date: datetime):
     document.save(f"{abbr}-Monthly FS-{end_date.strftime('%b')}.docx")
     convert(f"{abbr}-Monthly FS-{end_date.strftime('%b')}.docx")
     os.unlink(f"{abbr}-Monthly FS-{end_date.strftime('%b')}.docx")
@@ -1112,7 +1128,7 @@ def excpdetails(document, data: pd.DataFrame, end_date: datetime):
     heading_cells = abnormal_tbl.rows[0].cells
     heading_cells[0].text = 'Description'
     heading_cells[1].text = 'Account'
-    heading_cells[2].text = 'amount'
+    heading_cells[2].text = 'Amount'
     for _, row in abnormal_df.iterrows():
         cells = abnormal_tbl.add_row().cells
         cells[0].text = str(row['Description'])
@@ -1193,7 +1209,7 @@ def credits(document):
     credit.add_run('Chief Accountant\nNasser Bin Nawaf & Partners Holding W.L.L\n')
     credit.add_run('mail:njayathunga@nbn.qa\nTel:+974 4403 0407').italic = True
     credit.add_run(f"\nReport generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    document.core_properties.author = "Nadun Jayathunga"
+    document.core_properties.author = ' '.join(re.findall('[A-Z][a-z]*', os.getlogin()))
     document.core_properties.keywords = ("Chief Accountant\nNasser Bin Nawaf and Partners Holdings "
                                          "W.L.L\nmail:njayathunga@nbn.qa\nTele:+974 4403 0407")
 
@@ -1305,7 +1321,6 @@ def balancesheet(data: pd.DataFrame, end_date: datetime, dCoAAdler: pd.DataFrame
         by='ledger_code').sum()
     # returns positive figure
     cr_in_ar = cr_in_ar.loc[cr_in_ar['amount'] > 0, 'amount'].sum()
-
     bs_data: pd.DataFrame = data.loc[bs_filt, ['second_level', 'amount']].groupby(
         by=['second_level'], as_index=False).sum().rename(
         columns={'second_level': 'Description'}).set_index(keys='Description')
@@ -1323,21 +1338,21 @@ def balancesheet(data: pd.DataFrame, end_date: datetime, dCoAAdler: pd.DataFrame
     bs_data.loc['Other Receivable',
     'amount'] = bs_data.loc['Other Receivable', 'amount'] + dr_in_ap
     bs_data.loc['Trade Receivables',
-    'amount'] = bs_data.loc['Trade Receivables', 'amount'] + cr_in_ar
+    'amount'] = bs_data.loc['Trade Receivables', 'amount'] - cr_in_ar
     bs_data.loc['Accruals & Other Payables', 'amount'] = bs_data.loc[
-                                                             'Accruals & Other Payables', 'amount'] - cr_in_ar - rounding_diff
+                                                             'Accruals & Other Payables', 'amount'] + cr_in_ar - rounding_diff
     bs_data.loc['Retained Earnings',
     'amount'] = (bs_data.loc['Retained Earnings', 'amount'] if 'Retained Earnings' in bs_data.index else 0) + cum_profit
     bs_data = pd.concat([bs_data, rpr_row, rpp_row], ignore_index=False)
 
-    ca: float = bs_data.loc['Cash & Cash Equivalents', 'amount'] + bs_data.loc['Inventory', 'amount'] + bs_data.loc[
+    ca: float = bs_data.loc['Cash & Cash Equivalents', 'amount'] + (bs_data.loc['Inventory', 'amount'] if 'Inventory' in bs_data.index else 0 )+ bs_data.loc[
         'Other Receivable', 'amount'] + bs_data.loc['Trade Receivables', 'amount'] + bs_data.loc[
                     'Due From Related Parties', 'amount']
     nca: float = (bs_data.loc['Intangible Assets', 'amount'] if 'Intangible Assets' in bs_data.index else 0) + \
                  (bs_data.loc[
                       'Property, Plant  & Equipment', 'amount'] if 'Property, Plant  & Equipment' in bs_data.index else 0) + \
                  (bs_data.loc[
-                      'Right of use Asset', 'amount'] if 'Right of use Asset' in bs_data.index else 0)
+                      'Right of use Asset', 'amount'] if 'Right of use Asset' in bs_data.index else 0)+(bs_data.loc['Investment Properties', 'amount'] if 'Investment Properties' in bs_data.index else 0)
     equity: float = (bs_data.loc['Retained Earnings', 'amount'] if 'Retained Earnings' in bs_data.index else 0) + \
                     (bs_data.loc['Share Capital', 'amount'] if 'Share Capital' in bs_data.index else 0) + \
                     (bs_data.loc['Statutory Reserves', 'amount'] if 'Statutory Reserves' in bs_data.index else 0)
@@ -1345,7 +1360,7 @@ def balancesheet(data: pd.DataFrame, end_date: datetime, dCoAAdler: pd.DataFrame
                 bs_data.loc[
                     'Due To Related Parties', 'amount'] + (bs_data.loc[
                                                                'Short Term Bank Facilities', 'amount'] if 'Short Term Bank Facilities' in bs_data.index else 0)
-    ncl: float = bs_data.loc['Provisions', 'amount'] + (bs_data.loc[
+    ncl: float = (bs_data.loc['Provisions', 'amount'] if 'Provisions' in bs_data.index else 0) + (bs_data.loc[
                                                             'Lease Liabilities', 'amount'] if 'Lease Liabilities' in bs_data.index else 0)
 
     ta: float = ca + nca
@@ -2214,9 +2229,6 @@ def toc_customer(document, fInvoices: pd.DataFrame, end_date, credit_rating: pd.
         df_toc_cust = credit_rating
         df_toc_cust.reset_index(inplace=True)
         df_toc_cust = df_toc_cust[['Customer Name', f'{end_date.date()}']]
-        # df_toc_cust: pd.DataFrame = pd.DataFrame({'Customer Name': customer_list})
-
-        # df_toc_cust = pd.concat([df_toc_cust, credit_rating[[f'{end_date.date()}']]], axis=1)
 
         df_toc_cust = df_toc_cust.sort_values(by=f'{end_date.date()}', ascending=False).reset_index(drop=True)
 
@@ -2788,8 +2800,8 @@ def overhead_allocation_nbnl(row, overhead_monthly: pd.DataFrame, overall_rev: p
 def job_profitability(fTimesheet: pd.DataFrame, fGL: pd.DataFrame, end_date: datetime, dEmployee: pd.DataFrame,
                       dExclude: pd.DataFrame, fOT: pd.DataFrame, fInvoices: pd.DataFrame, cogs_map: dict,
                       dJobs: pd.DataFrame, database, fData: pd.DataFrame, fMI: pd.DataFrame) -> dict:
-    emp_master:pd.DataFrame = dEmployee.copy()
-    emp_master.set_index(keys='emp_id',inplace=True)
+    emp_master: pd.DataFrame = dEmployee.copy()
+    emp_master.set_index(keys='emp_id', inplace=True)
     start_date: datetime = datetime(year=end_date.year, month=1, day=1)
     periods: list = pd.date_range(start=start_date, end=end_date, freq='ME').to_pydatetime().tolist()
     fGL = fGL.loc[:,
@@ -2817,8 +2829,8 @@ def job_profitability(fTimesheet: pd.DataFrame, fGL: pd.DataFrame, end_date: dat
 
         for period in periods:
             consumable: dict = \
-            fMI.loc[fMI['voucher_date'] == period, ['order_id', 'amount']].groupby(by='order_id', as_index=True)[
-                'amount'].sum().to_dict()
+                fMI.loc[fMI['voucher_date'] == period, ['order_id', 'amount']].groupby(by='order_id', as_index=True)[
+                    'amount'].sum().to_dict()
             st_date: datetime = period + relativedelta(day=1)
             fGL_fitlered: pd.DataFrame = fGL.loc[(fGL['voucher_date'] >= st_date) & (fGL['voucher_date'] <= period) &
                                                  (fGL['second_level'] == 'Manpower Cost'), ['cost_center',
@@ -2833,6 +2845,8 @@ def job_profitability(fTimesheet: pd.DataFrame, fGL: pd.DataFrame, end_date: dat
                     as_index=False)[
                     'amount'].sum()
             fGL_emp = fGL_emp.loc[fGL_emp['amount'] != 0]
+            if database == 'premium':
+                fGL_emp = fGL_emp.loc[~fGL_emp['ledger_code'].isin([5010105004, 5010105005, 5010702001])]
             # TODO You may group this to cogs map using the ledger code. to be fixed. it will reduce the no of iteretion by approx 12.5%
             fTimesheet_filtered: pd.DataFrame = fTimesheet.loc[
                 (fTimesheet['v_date'] >= st_date) & (fTimesheet['v_date'] <= period)]
@@ -2905,7 +2919,6 @@ def job_profitability(fTimesheet: pd.DataFrame, fGL: pd.DataFrame, end_date: dat
             allocation_dict = {k: allocation_dict.get(k, 0) + inv_filtered_cust.get(k, 0) for k in
                                set(allocation_dict) | set(inv_filtered_cust)}
 
-
             for i in cogs_map[database]:
                 z: float = fGL_other.loc[fGL_other['ledger_code'].isin(cogs_map[database][i])]['amount'].sum()
                 if z != 0:
@@ -2927,7 +2940,6 @@ def job_profitability(fTimesheet: pd.DataFrame, fGL: pd.DataFrame, end_date: dat
                 accommodation_allocation[row['order_id']] = value
                 allocation_dict = {k: allocation_dict.get(k, 0) + accommodation_allocation.get(k, 0) for k in
                                    set(allocation_dict) | set(accommodation_allocation)}
-
 
             if 'AC-ACCOMODATION' in allocation_dict:
                 del allocation_dict['AC-ACCOMODATION']
@@ -2953,8 +2965,6 @@ def job_profitability(fTimesheet: pd.DataFrame, fGL: pd.DataFrame, end_date: dat
             cy_ytd.groupby(by=[pd.Grouper(key='voucher_date', freq='ME'), 'customer_code'], as_index=False)[
                 'amount'].sum()
         cy_ytd_emp: pd.DataFrame = cy_ytd.groupby(by='emp_id', as_index=False)['amount'].sum()
-    elif database == 'premium':
-        pass
     elif database == 'nbn_logistics':
         exclusion: dict = {
             'ruwais': {'customers': ['CUS0794', 'CUS0781', 'CUS0787', 'CUS0613', 'CUS0756', 'CUS0813', 'CUS0810'],
@@ -3016,7 +3026,6 @@ def job_profitability(fTimesheet: pd.DataFrame, fGL: pd.DataFrame, end_date: dat
         periodic_allocation: dict = nbnl_profitability.loc[filt_for_ytd, ['voucher_date', 'order_id', 'amount']]
         periodic_allocation = periodic_allocation.groupby('voucher_date').apply(
             lambda g: dict(zip(g['order_id'], g['amount']))).to_dict()
-
     else:
         pass
     return {'periodic_allocation': periodic_allocation, 'cy_cp_cus': cy_cp_cus, 'cy_ytd_cus': cy_ytd_cus,
@@ -3115,7 +3124,6 @@ def customer_specifics(document, fInvoices: pd.DataFrame, end_date: datetime, dC
                        dJobs: pd.DataFrame, path, fCollection: pd.DataFrame, dEmployee: pd.DataFrame,
                        fTimesheet: pd.DataFrame, fOT: pd.DataFrame, dExclude: pd.DataFrame, fGL: pd.DataFrame,
                        database: str, fData: pd.DataFrame, fLogInv: pd.DataFrame, fMI: pd.DataFrame):
-
     customer_list: list = sorted(fInvoices.loc[(fInvoices['invoice_date'] >= datetime(year=end_date.year,
                                                                                       month=end_date.month, day=1)) & (
                                                        fInvoices['invoice_date'] <= end_date), 'cus_name'].unique())
@@ -3128,9 +3136,7 @@ def customer_specifics(document, fInvoices: pd.DataFrame, end_date: datetime, dC
     profitability['customer_info'] = customer_info
     heading_format = {'fontfamily': 'Georgia', 'color': 'k', 'fontweight': 'bold', 'fontsize': 10}
     cy_cp_profit_cus: pd.DataFrame = profitability['cy_cp_cus']
-    cy_cp_profit_cus.to_csv('cy_cp_profit_cus.csv')
     cy_ytd_profit_cus: pd.DataFrame = profitability['cy_ytd_cus']
-    cy_ytd_profit_cus.to_csv('cy_ytd_profit_cus.csv')
     cy_cp_net_profit_cus: pd.DataFrame = profitability['cy_cp_cus_np']
     cy_ytd_net_profit_cus: pd.DataFrame = profitability['cy_ytd_cus_np']
     rating = None
@@ -3274,7 +3280,7 @@ def customer_specifics(document, fInvoices: pd.DataFrame, end_date: datetime, dC
             cy_ytd_roi = cy_cp_profit_cus.loc[cy_ytd_profit_cus['customer_code'].isin(cus_code), 'amount'].sum() / \
                          monthly_rev['Gross Rev'].sum() * 100
             tbl_cust_gp_td.cells[3].text = str(f"{round(number=cy_ytd_roi, ndigits=1)}%")
-        elif database == 'elite_security':
+        elif database in ['elite_security', 'premium']:
             tbl_cust_gp_td.cells[
                 0].text = f"GP-{number_format(num=cy_cp_profit_cus.loc[cy_cp_profit_cus['customer_code'].isin(cus_code), 'amount'].sum())} | {cp_gp_pct}%"
             tbl_cust_gp_td.cells[
@@ -3539,14 +3545,14 @@ def emp_age(dob: datetime, end_date: datetime) -> str:
             break
 
 
-def employee_related(dEmployee: pd.DataFrame, end_date: datetime, database: str) -> dict:
+def employee_related(dEmployee: pd.DataFrame, end_date: datetime, database: str, abbr: str) -> dict:
     start_date: datetime = datetime(year=end_date.year, month=1, day=1)
     total_pie_slices: int = 5
     dEmployee['termination_date'] = pd.to_datetime(dEmployee['termination_date'])
     dEmployee['dob'] = pd.to_datetime(dEmployee['dob'])
     dEmployee['doj'] = pd.to_datetime(dEmployee['doj'])
     dEmployee = dEmployee.loc[(~dEmployee['emp_id'].isin(['ESS0015-OLD', 'ESS0016'])) & (
-        dEmployee['emp_id'].str.contains('ESS|NBNL')) & (dEmployee['doj'] <= end_date) & (
+        dEmployee['emp_id'].str.contains(abbr)) & (dEmployee['doj'] <= end_date) & (
                                       (dEmployee['termination_date'] >= start_date) | (
                                   dEmployee['termination_date'].isna()))]
     emp_types: dict = {'MGMT': 'Staff', 'STAFF': 'Staff', 'ELV STAFF': 'Staff', 'LABOUR': 'Labour',
@@ -3559,14 +3565,10 @@ def employee_related(dEmployee: pd.DataFrame, end_date: datetime, database: str)
     type: list = [emp_types[i] for i in current_emp['emp_type'].tolist()]
     type: dict = {item: type.count(item) for item in set(type)}
 
-    if database in ['elite_security', 'premium']:
+    if database in ['elite_security']:
         dept: list = [i if i == 'ELV' else 'Guarding' for i in current_emp['dept']]
-    elif database == 'nbn_logistics':
-        dept: list = current_emp['dept'].tolist()
-    elif database == 'nbn_realestate':
-        pass
     else:
-        pass
+        dept: list = current_emp['dept'].tolist()
 
     periods: list = pd.date_range(start=start_date, end=end_date, freq='ME').to_pydatetime().tolist()
     turnover_list = []
@@ -3641,9 +3643,9 @@ def employee_related(dEmployee: pd.DataFrame, end_date: datetime, database: str)
     return employee_data
 
 
-def hrrelated(document, dEmployee: pd.DataFrame, database: str, end_date: datetime):
+def hrrelated(document, dEmployee: pd.DataFrame, database: str, end_date: datetime, abbr: str):
     change_orientation(document=document, method='l')
-    emp_data: dict = employee_related(dEmployee=dEmployee, database=database, end_date=end_date)
+    emp_data: dict = employee_related(dEmployee=dEmployee, database=database, end_date=end_date, abbr=abbr)
     plt.style.use('ggplot')
     hr_fig_1, ((gender, type), (dept, nationality)) = plt.subplots(nrows=2, ncols=2, figsize=(10.5, 7))
 
@@ -4410,8 +4412,8 @@ def problematic_customers(rating: pd.DataFrame, end_date: datetime, document):
     periods.insert(0, 'Customer Name')
     df_rating.fillna(value=0, inplace=True)
 
-    df_rating.iloc[:, 1:] = df_rating.iloc[:, 1:].applymap(lambda x: '.' if x < 35000  and x > 0 else np.nan)
-    
+    df_rating.iloc[:, 1:] = df_rating.iloc[:, 1:].applymap(lambda x: '.' if x < 35000 and x > 0 else np.nan)
+
     df_rating.reset_index(inplace=True)
 
     for i, j in df_rating.iterrows():
@@ -4422,8 +4424,8 @@ def problematic_customers(rating: pd.DataFrame, end_date: datetime, document):
                 df_rating.iloc[i, k + 1] = '.'
 
     df_rating = df_rating[periods]
-    df_rating.dropna(how='all',inplace=True,subset=df_rating.columns[1:])
-    df_rating.fillna('',inplace=True)
+    df_rating.dropna(how='all', inplace=True, subset=df_rating.columns[1:])
+    df_rating.fillna('', inplace=True)
     tbl_cust_pro = document.add_table(rows=1, cols=df_rating.shape[1])
     tbl_cust_pro.style = 'Table Grid'
     heading_cells = tbl_cust_pro.rows[0].cells
@@ -4431,7 +4433,7 @@ def problematic_customers(rating: pd.DataFrame, end_date: datetime, document):
         if col == 'Customer Name':
             heading_cells[idx].text = 'Name'
         else:
-            heading_cells[idx].text = str(datetime.strptime(col,'%Y-%m-%d').strftime('%b'))
+            heading_cells[idx].text = str(datetime.strptime(col, '%Y-%m-%d').strftime('%b'))
 
     for idx, row in df_rating.iterrows():
         cells = tbl_cust_pro.add_row().cells
@@ -4449,7 +4451,7 @@ def problematic_customers(rating: pd.DataFrame, end_date: datetime, document):
             colour = 'FFFFFF'  # White
             font_colour = RGBColor(0, 0, 0)
             if value == '.':
-                colour = 'FF0000' # Danger Red
+                colour = 'FF0000'  # Danger Red
                 font_colour = RGBColor(255, 0, 0)
             cell_xml_element = row.cells[c]._tc
             table_cell_properties = cell_xml_element.get_or_add_tcPr()
@@ -4461,3 +4463,123 @@ def problematic_customers(rating: pd.DataFrame, end_date: datetime, document):
             if run_elements:  # Ensure there is at least one run
                 run = run_elements[0]  # Get the first run
                 run.font.color.rgb = font_colour  # Set font color to red
+
+
+def occupancy_report(end_date: datetime, dJobs: pd.DataFrame, fInvoices: pd.DataFrame,dRoom:pd.DataFrame) -> dict:
+    re_df: dict = {}
+    start_date = end_date - relativedelta(months=12) + timedelta(days=1)
+    contract_reg: pd.DataFrame = dJobs.loc[(dJobs['end_date'] >= start_date) & (dJobs['start_date'] <= end_date)]
+    rooms: list = contract_reg['room_id'].unique()
+    occupancy = {}
+    for i in rooms:
+        periods = []
+        df_room = contract_reg.loc[(contract_reg['room_id'] == i)]
+        for _, row in df_room.iterrows():
+            period: list = pd.date_range(start=row['start_date'] + pd.offsets.MonthEnd(0),
+                                         end=row['end_date'] + pd.offsets.MonthEnd(0),
+                                         freq='ME').to_pydatetime().tolist()
+
+            period = [i for i in period if i >= start_date and i <= end_date]
+            periods += period
+        occupancy[i] = set(periods)
+    cols = pd.date_range(start=start_date, end=end_date, freq='ME').to_pydatetime().tolist()
+    result_dict = {date: ['✗'] * len(rooms) for date in cols}
+    result_dict['room_id'] = rooms
+    occupancy_report: pd.DataFrame = pd.DataFrame(data=result_dict).set_index('room_id')
+    timeperiods: list = list(occupancy_report.columns)
+    for room, row in occupancy_report.iterrows():
+        for j in timeperiods:
+            if j in occupancy[room]:
+                occupancy_report.loc[room, j] = '✔'
+    occupancy_report.reset_index(inplace=True)
+    occupancy_report = pd.merge(right=occupancy_report,left=dRoom[['room_id','room_name','status']],on='room_id',how='right')
+    occupancy_report = occupancy_report.loc[occupancy_report['status'] == 'active']
+    pp_start: datetime = end_date - relativedelta(months=1)
+    new_contracts: list = contract_reg.loc[
+        (contract_reg['start_date'] >= datetime(year=end_date.year, month=end_date.month, day=1)) & (
+                    contract_reg['start_date'] <= end_date), 'order_id'].tolist()
+    close_contracts: list = contract_reg.loc[
+        (contract_reg['end_date'] >= datetime(year=pp_start.year, month=pp_start.month, day=1)) & (
+                    contract_reg['end_date'] < datetime(year=end_date.year, month=end_date.month,
+                                                        day=1)), 'order_id'].tolist()
+
+    new: pd.DataFrame = fInvoices.loc[
+        (fInvoices['order_id'].isin(new_contracts)) & (fInvoices['invoice_date'] <= end_date) & (
+                    fInvoices['invoice_date'] >= datetime(year=end_date.year, month=end_date.month, day=1)), [
+            'customer_code', 'amount']].groupby('customer_code', as_index=False)['amount'].sum()
+    vacated: pd.DataFrame = fInvoices.loc[
+        (fInvoices['order_id'].isin(close_contracts)) & (fInvoices['invoice_date'] <= pp_start) & (
+                    fInvoices['invoice_date'] >= datetime(year=pp_start.year, month=pp_start.month, day=1)), [
+            'customer_code', 'amount']].groupby('customer_code', as_index=False)['amount'].sum()
+    price_change: pd.DataFrame = fInvoices.loc[
+        (fInvoices['invoice_date'] >= datetime(year=pp_start.year, month=pp_start.month, day=1)) & (
+                    fInvoices['invoice_date'] <= end_date), ['customer_code', 'invoice_date', 'amount']]
+    price_change = price_change.pivot_table(index='customer_code', columns=pd.Grouper(key='invoice_date', freq='ME'),
+                                            values='amount').fillna(value=0).reset_index()
+
+    price_change.loc[:, 'change'] = price_change.iloc[:, 2] - price_change.iloc[:, 1]
+    price_change = price_change.loc[price_change['change'] != 0, ['customer_code', 'change']]
+
+    re_df = {'occupancy_report': occupancy_report, 'new': new, 'vacated': vacated, 'price_change': price_change}
+
+    return re_df
+
+
+def vacancy_cost(row):
+    unit_name:str = row['room_name']
+    if unit_name.startswith('V'):
+        return row['Total'] * 11_500
+    elif unit_name.startswith('A'):
+        return row['Total'] * 5_000
+    elif unit_name.startswith('G'):
+        return row['Total'] * 15_000
+    else:
+        pass
+
+
+def re_related(document,re_reports:dict):
+    re_reports:dict = re_reports
+    occupancy:pd.DataFrame = re_reports['occupancy_report']
+    occupancy = occupancy.drop(['room_id','status'],axis=1)
+    occupancy.sort_values(by='room_name',inplace=True,ascending=False)
+    occupancy.loc[:,'Total'] =occupancy.apply(lambda row: (row == '✗').sum(), axis=1)
+    occupancy.loc[:,'Cost'] = occupancy.apply(vacancy_cost,axis=1)
+    occupancy_tbl = document.add_table(rows=1, cols=len(occupancy.columns))
+    heading_cells = occupancy_tbl.rows[0].cells
+    
+    for idx,name in enumerate(occupancy.columns):
+        if name == 'room_name':
+            heading_cells[idx].text = 'Unit'
+        elif name == 'Total':
+            heading_cells[idx].text = 'Total'
+        elif name == 'Cost':
+            heading_cells[idx].text = 'Cost'
+        else:
+            heading_cells[idx].text =  name.strftime('%b') 
+
+    for _, row in occupancy.iterrows():
+        cells = occupancy_tbl.add_row().cells
+        for j in range(len(row)):
+            if j == 0:
+                cells[0].text = str(row['room_name'])
+            else:
+                cells[j].text = str(row.iloc[j])
+    
+    document.add_paragraph(f"\nTotal cost of Vacancy for 12 months::QAR {occupancy['Cost'].sum()}")
+
+    table_formatter(table_name=occupancy_tbl, style_name='table_style_1', special=[])
+    for row in occupancy_tbl.rows[1:]:
+        for j in range(len(row.cells)):
+            if j != 0:
+                value = row.cells[j].text
+                if value == '✗':
+                    colour = 'FF0000'
+                    cell_xml_element = row.cells[j]._tc
+                    table_cell_properties = cell_xml_element.get_or_add_tcPr()
+                    shade_obj = OxmlElement('w:shd')
+                    shade_obj.set(qn('w:fill'), colour)
+                    table_cell_properties.append(shade_obj)
+
+
+def re_rev_recon(document,re_reports:dict):
+    pass
