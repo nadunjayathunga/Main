@@ -6,7 +6,8 @@ from helper_3 import (welcome_page, data_sources, preprocessing, first_page, clo
                     gpnpebitda_graph, plmonthwise, excpdetails, guardingbumonthwise, elvbumonthwise, credits,
                     plhistorical, bshistorical, rpbalances, apbalances, main_bs_ratios, revenue,
                     revenue_dashboard, data_output, revenue_dashboard_two,  customer_specifics,
-                    revenue_movement, hrrelated, opsrelated,cohart,re_related,occupancy_report,re_rev_recon)
+                    revenue_movement, hrrelated, opsrelated,cohart,re_related,occupancy_report,re_rev_recon,console_hrrelated,
+                    rpt_graphs)
 
 welcome_info: dict = welcome_page()
 raw_data: dict = data_sources(engine=welcome_info['engine'], database=welcome_info['database'])
@@ -37,9 +38,7 @@ plmonthwise(document=document, data=output_data['cy_ytd_basic_monthwise'],
             special=['Total Revenue', 'Gross Profit', 'Total Overhead', 'Net Profit'])
 document.add_page_break()
 change_orientation(document=document, method='p')
-header(title='Explanations for Major Changes', company=welcome_info['long_name'], document=document)
-excpdetails(document=document, data=output_data['merged'], end_date=welcome_info['end_date'])
-document.add_page_break()
+excpdetails(document=document, data=output_data['merged'], end_date=welcome_info['end_date'],long_name=welcome_info['long_name'])
 if welcome_info['database'] == 'nbn_logistics':
     change_orientation(document=document, method='l')
     header(title='Division wise Profitability', company=welcome_info['long_name'], document=document)
@@ -76,6 +75,9 @@ change_orientation(document=document, method='p')
 header(title='Break-up of Related-Party Balances', company=welcome_info['long_name'], document=document)
 rpbalances(document=document, end_date=welcome_info['end_date'], data=output_data['merged'],
            dCoAAdler=refined_data['dCoAAdler'])
+if welcome_info['database'] == 'nbn_holding':
+    document.add_page_break()
+    rpt_graphs(end_date=welcome_info['end_date'],document=document)
 document.add_page_break()
 header(title='Accounts Payable Break-up', company=welcome_info['long_name'], document=document)
 apbalances(document=document, fAP=refined_data['fAP'])
@@ -110,10 +112,12 @@ if welcome_info['database'] in ['elite_security','nbn_logistics','premium']:
     revenue_movement(document=document, fInvoices=refined_data['fInvoices'], end_date=welcome_info['end_date'],database=welcome_info['database'])
 if welcome_info['database'] == 'nbn_logistics':
     cohart(document=document,end_date=welcome_info['end_date'],fInvoices=refined_data['fInvoices'],fSalesTill2020=refined_data['fSalesTill2020'],dCustomer=refined_data['dCustomer'])
-if welcome_info['database'] in ['elite_security','nbn_logistics','premium']:
+if welcome_info['database'] in ['elite_security','nbn_logistics','premium','nbn_holding']:
     page_separator(head='HR', document=document)
     hrrelated(document=document, database=welcome_info['database'], dEmployee=refined_data['dEmployee'],
-            end_date=welcome_info['end_date'],abbr=welcome_info['abbr'],)
+            end_date=welcome_info['end_date'])
+if welcome_info['database']=='nbn_holding':
+    console_hrrelated(database=welcome_info['database'],document=document,end_date=welcome_info['end_date'])
 if welcome_info['database'] == 'elite_security':
     page_separator(head='Operations', document=document)
     opsrelated(financial=output_data['cy_ytd_basic_monthwise'], document=document, dExclude=refined_data.get('dExclude'),
@@ -123,8 +127,10 @@ if welcome_info['database'] == 'nbn_realestate':
     header(title='Unit Occupancy', company=welcome_info['long_name'], document=document)
     re_reports:dict = occupancy_report(end_date=welcome_info['end_date'],dJobs=refined_data.get('dJobs'),fInvoices=refined_data['fInvoices'],dRoom=refined_data.get('dRoom'))
     re_related(document=document,re_reports=re_reports)
-    # header(title='Revenue Reconcilliation', company=welcome_info['long_name'], document=document)
-
+    document.add_page_break()
+    header(title='Revenue Reconcilliation', company=welcome_info['long_name'], document=document)
+    re_rev_recon(document=document,re_reports=re_reports,fGL=output_data['merged'],end_date=welcome_info['end_date'])
+    document.add_page_break()
 credits(document=document)
 closing(document=document, abbr=welcome_info['abbr'],end_date=welcome_info['end_date'])
 
