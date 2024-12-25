@@ -7,7 +7,7 @@ from helper_3 import (welcome_page, data_sources, preprocessing, first_page, clo
                     plhistorical, bshistorical, rpbalances, apbalances, main_bs_ratios, revenue,
                     revenue_dashboard, data_output, revenue_dashboard_two,  customer_specifics,
                     revenue_movement, hrrelated, opsrelated,cohart,re_related,occupancy_report,re_rev_recon,console_hrrelated,
-                    rpt_graphs)
+                    rpt_graphs,consolidated_pandl)
 
 welcome_info: dict = welcome_page()
 raw_data: dict = data_sources(engine=welcome_info['engine'], database=welcome_info['database'])
@@ -131,6 +131,7 @@ if welcome_info['database'] == 'nbn_realestate':
     header(title='Revenue Reconcilliation', company=welcome_info['long_name'], document=document)
     re_rev_recon(document=document,re_reports=re_reports,fGL=output_data['merged'],end_date=welcome_info['end_date'])
     document.add_page_break()
-credits(document=document)
+credits(document=document,abbr=welcome_info['abbr'])
 closing(document=document, abbr=welcome_info['abbr'],end_date=welcome_info['end_date'])
+consolidated_pandl(welcome_info=welcome_info)
 

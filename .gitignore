@@ -1,50 +1,16 @@
 /.idea
 /app.py
-/assets
 /cohort.py
 /consolidation.py
 /containers.py
-/Credit Score.docx
-/crud_dash_postgresql.py
-/data
 /data.py
-/Dataframes.txt
 /data_upload.py
-/data_upload_mysql.py
-/data_upload_mysql_2.py
 /exp_allocation.py
 /exp_allocation_v2.py
-/gp_calculation.docx
-/Inteco.xlsx
-/Interco-Trn.xlsx
 /interco.py
 /job_profit.py
-/myfile.csv
-/pages
 /rand_no.csv
-/report.csv
-/test.js
-/test_results
-/to do - 1.txt
-/to do.txt
 /__pycache__
 /Not Working
-/report-0.txt
-/report-1.txt
-/functions.xlsx
-/flow.docx
-/Monthly FS.pdf
-/Dashboard.xlsx
 /test.py
-/outstanding
-/Settlement
-/fCollection.csv
-/final_report.csv
-/nbnl_profitability.csv
-/ESS-Monthly FS.pdf
-/NBL-Monthly FS.pdf
-/PH-Monthly FS.PDF
-/NBR-Monthly FS-Oct.pdf
-/NBNL-Monthly FS-Oct.pdf
-/PH-Monthly FS-Oct.pdf
-/NBT-Monthly FS-Oct.pdf
+/Tables.xlsx

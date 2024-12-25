@@ -221,7 +221,7 @@ def receipts_recorded(data: pd.DataFrame, database: str) -> pd.DataFrame:
         correction = pd.DataFrame(data=correction)
         data = pd.concat([data, correction])
     nulldf: pd.DataFrame = data.loc[data['voucher_date'].isna()]
-    nulldf = nulldf.dropna(axis=1, how='all') 
+    nulldf = nulldf.dropna(axis=1, how='all')
     # certain invoices have been settled in multiple receipts. mode of settlement can be receipt/ credit note or even a JV
     multidates: pd.DataFrame = data.loc[~data['voucher_date'].isna() & data['voucher_date'].str.contains(pat=',')]
     # This will convert voucher_date column to datetime format, those entries which does not follow the format will be returned as null
@@ -230,7 +230,7 @@ def receipts_recorded(data: pd.DataFrame, database: str) -> pd.DataFrame:
     singledate: pd.DataFrame = data.loc[~data['voucher_date'].isna()]
     # For those entries which has only one receipt will look like below ESS/DN230001-2650.00. Split voucher_number into 2 parts convert them to 
     # columns and assign them into voucher_number nad voucher_amount
-    singledate = singledate.copy() # to avoid SettingWithCopyWarning
+    singledate = singledate.copy()  # to avoid SettingWithCopyWarning
     singledate[['voucher_number', 'voucher_amount']] = singledate['voucher_number'].apply(
         lambda name: pd.Series(name.split("-", 1)))
     final_collection_df: pd.DataFrame = pd.DataFrame(columns=[
@@ -268,12 +268,84 @@ def receipts_recorded(data: pd.DataFrame, database: str) -> pd.DataFrame:
     return final_collection_df
 
 
+def refine_budget_df(fBudget:pd.DataFrame, database:str, dCoAAdler:pd.DataFrame)->pd.DataFrame:
+    """This function will refine the raw fBudget dataframe read from the database. 
+
+    Args:
+        fBudget (pd.DataFrame): raw dataframe read from the database
+        database (str): user selected company
+        dCoAAdler (pd.DataFrame): dataframe read from the database
+
+    Returns:
+        pd.DataFrame: wide format fBudget dataframe transposed to long format dataframe
+    """
+    # the code will keep fy and ledger_code as is while transpose rest of the columns i.e jan, feb... dec to rows and 
+    # 'Month' will be name of the new column containing month.
+    fBudget = pd.melt(fBudget, id_vars=['fy', 'ledger_code'], var_name='Month', value_name='amount')
+    fBudget.loc[:, 'voucher_date'] = fBudget.apply(lambda x: pd.to_datetime(f'{x["fy"]}-{x["Month"]}-01') + relativedelta(day=31), axis=1)
+    fBudget.drop(columns=['fy', 'Month'], inplace=True)
+    fBudget = fBudget.loc[fBudget['amount'] != 0]
+    fBudget = pd.merge(left=fBudget, right=dCoAAdler,on='ledger_code', how='left')
+    fBudget.loc[fBudget['forth_level'] == 'Expenses', 'amount'] *= -1
+    if database == 'elite_security':
+        fBudget['business_unit_name'] = 'GUARDING-ESS'
+    elif database == 'nbn_logistics':
+        fBudget['business_unit_name'] = 'NBN Logistics'
+    elif database == 'premium':
+        fBudget['business_unit_name'] = 'Premium Hospitality'
+    elif database == 'nbn_realestate':
+        fBudget['business_unit_name'] = 'NBN Real Estate'
+    else:
+        fBudget['business_unit_name'] = ''
+    return fBudget
+
+
+def refined_ap_df(fAP:pd.DataFrame, dCoAAdler:pd.DataFrame)->pd.DataFrame:
+    """This function will refind the raw fAP dataframe read from the database.
+
+    Args:
+        fAP (pd.DataFrame): raw fAP dataframe read from database
+        dCoAAdler (pd.DataFrame): chart of account of the given company
+
+    Returns:
+        pd.DataFrame: refined, modified and transposed fAP dataframe.
+    """
+    # read throught all the possible similar inter-company names stored in company_date dict and create a set for those inter-company names 
+    # appearing in chart of account under consideration
+    #{2020304001, 2020304002, 3020101001, 3020101002, 2020303001, 2020303002, 2020303003, 1020404001, 
+    # 1020403001, 1020403002, 1020201019, 1020403003, 1020201021,2020301001, 1020401001, 1020401002, 1020406001}
+    interco_lgr: set[int] = set(itertools.chain.from_iterable(
+        [dCoAAdler.loc[dCoAAdler['ledger_name'].isin(company_data[i]['names']), 'ledger_code'].tolist() for i in
+         company_data]))
+    # accounts payable ledgers are those ledgers which are not inter-company
+    fAP: pd.DataFrame = fAP.loc[~fAP['ledger_code'].isin(interco_lgr)]
+    # this will drop rows if any of its columns contain n/a. usually amount column contains n/a values
+    fAP = fAP.dropna(how='any')
+    fAP = pd.merge(left=fAP, right=dCoAAdler[['ledger_name', 'ledger_code']], on='ledger_code', how='left').drop(
+        columns=['ledger_code'])
+    fAP['amount'] = fAP['amount'].astype(float)
+    fAP.loc[:, 'amount'] = fAP['amount'] * -1
+    fAP = fAP.groupby(by=['ledger_name', 'bracket'], as_index=False)['amount'].sum()
+    fAP = fAP.pivot_table(index='ledger_name', columns='bracket', values='amount')
+    # create a new column 'Total' that adds up columns values from '0-30' till last column
+    fAP.loc[:, 'Total'] = fAP.loc[:, '0-30':].sum(axis=1)
+    fAP = fAP.loc[fAP['Total'] > 0]
+    fAP.dropna(how='all', axis=1, inplace=True)
+    fAP.fillna(0, inplace=True)
+    fAP.reset_index(inplace=True)
+    # calculate the column total for each bracket column
+    for i in fAP.columns:
+        if i != 'ledger_name':
+            fAP.loc['Total', i] = fAP[i].sum()
+    fAP.loc['Total', 'ledger_name'] = 'Total'
+    return fAP
+
+
 def preprocessing(data: dict, database: str) -> dict:
     fGL: pd.DataFrame = data['fGL']
     dEmployee: pd.DataFrame = data['dEmployee']
     dCoAAdler: pd.DataFrame = data['dCoAAdler']
-    dCustomer: pd.DataFrame = data['dCustomer']
-    fBudget: pd.DataFrame = data['fBudget']
+    dCustomer: pd.DataFrame = data['dCustomer'] 
     fCollection: pd.DataFrame = data['fCollection']
     fCreditNote: pd.DataFrame = data['fCreditNote']
     dJobs: pd.DataFrame = data['dJobs']
@@ -286,67 +358,30 @@ def preprocessing(data: dict, database: str) -> dict:
     fCreditNote['amount'] = fCreditNote['amount'] * -1
     fCreditNote = pd.merge(
         left=fCreditNote, right=dCustomer, on='ledger_code', how='left')
-    fBudget = pd.melt(fBudget, id_vars=[
-        'fy', 'ledger_code'], var_name='Month', value_name='amount')
-    fBudget.loc[:, 'voucher_date'] = fBudget.apply(
-        lambda x: pd.to_datetime(f'{x["fy"]}-{x["Month"]}-01') + relativedelta(day=31), axis=1)
-    fBudget.drop(columns=['fy', 'Month'], inplace=True)
-    fBudget = fBudget.loc[fBudget['amount'] != 0]
-    fBudget = pd.merge(left=fBudget, right=dCoAAdler,
-                       on='ledger_code', how='left')
-    fAP: pd.DataFrame = data['fAP']
-    interco_lgr: set = set(itertools.chain.from_iterable(
-        [dCoAAdler.loc[dCoAAdler['ledger_name'].isin(company_data[i]['names']), 'ledger_code'].tolist() for i in
-         company_data]))
-    fAP = fAP.loc[~fAP['ledger_code'].isin(interco_lgr)]
-    fAP = fAP.dropna(how='any')
-    fAP = pd.merge(left=fAP, right=dCoAAdler[['ledger_name', 'ledger_code']], on='ledger_code', how='left').drop(
-        columns=['ledger_code'])
-    fAP['amount'] = fAP['amount'].astype(float)
-    fAP.loc[:, 'amount'] = fAP['amount'] * -1
-    fAP = fAP.groupby(by=['ledger_name', 'bracket'], as_index=False)['amount'].sum()
-    fAP = fAP.pivot_table(index='ledger_name', columns='bracket', values='amount')
-    fAP.loc[:, 'Total'] = fAP.loc[:, '0-30':].sum(axis=1)
-    fAP = fAP.loc[fAP['Total'] > 0]
-    fAP.dropna(how='all', axis=1, inplace=True)
-    fAP.fillna(0, inplace=True)
-    fAP.reset_index(inplace=True)
     fInvoices: pd.DataFrame = data['fInvoices']
-    for i in fAP.columns:
-        if i != 'ledger_name':
-            fAP.loc['Total', i] = fAP[i].sum()
-    fAP.loc['Total', 'ledger_name'] = 'Total'
-    if database == 'elite_security':
-        fBudget['business_unit_name'] = 'GUARDING-ESS'
-    elif database == 'nbn_logistics':
-        fBudget['business_unit_name'] = 'NBN Logistics'
-    elif database == 'premium':
-        fBudget['business_unit_name'] = 'Premium Hospitality'
-    else:
-        fBudget['business_unit_name'] = 'NBN Real Estate'
-
-    fBudget.loc[fBudget['forth_level'] == 'Expenses', 'amount'] *= -1
+    fAP: pd.DataFrame = refined_ap_df(fAP= data['fAP'],dCoAAdler=dCoAAdler)
+    fBudget: pd.DataFrame =refine_budget_df(data['fBudget'],database=database,dCoAAdler=dCoAAdler)
     fCollection = receipts_recorded(data=fCollection, database=database)
     dEmployee.loc[:, 'travel_cost'] = dEmployee['travel_cost'].fillna(0)
     dEmployee['termination_date'] = pd.to_datetime(dEmployee['termination_date'])
     fPurchase.dropna(how='any', inplace=True)
     fPurchase.loc[:, 'ledger_code'] = fPurchase['ledger_code'].apply(lambda x: x[11:x.find('-')])
     fPurchase['ledger_code'] = pd.to_numeric(fPurchase['ledger_code'])
-    common: dict = {'fGL': fGL, 'dEmployee': dEmployee, 'dCoAAdler': dCoAAdler, 'fBudget': fBudget,
+    common: dict = {'fGL': fGL, 'dEmployee': dEmployee, 'dCoAAdler': dCoAAdler, 'fBudget': data['fBudget'],
                     'dCustomer': dCustomer, 'fCollection': fCollection, 'fAP': fAP, 'fInvoices': fInvoices,
-                    'dJobs': dJobs, 'fPurchase': fPurchase}
+                    'dJobs': dJobs, 'fPurchase': fPurchase,'fBudget':fBudget}
 
     if database in ['elite_security', 'premium']:
         ftimesheet: pd.DataFrame = data['ftimesheet']
+        ftimesheet = ftimesheet.loc[~ftimesheet['order_id'].isin(['discharged', 'not_joined'])]
+        ftimesheet.loc[:, 'v_date'] = ftimesheet['v_date'] + pd.offsets.MonthEnd(0)
         fOT: pd.DataFrame = data['fOT']
-        dExclude: pd.DataFrame = data['dExclude']
         fOT.loc[:, 'voucher_date'] = fOT['voucher_date'].str.split(' ', expand=True)[4].str.strip()
         fOT.loc[:, 'voucher_date'] = pd.to_datetime(fOT['voucher_date'], format='%b-%Y') + pd.offsets.MonthEnd(0)
         fOT.fillna(0, inplace=True)
         fOT = fOT.loc[fOT['amount'] != 0]
         fOT.loc[:, 'amount'] = fOT['amount'] * -1
-        ftimesheet = ftimesheet.loc[~ftimesheet['order_id'].isin(['discharged', 'not_joined'])]
-        ftimesheet.loc[:, 'v_date'] = ftimesheet['v_date'] + pd.offsets.MonthEnd(0)
+        dExclude: pd.DataFrame = data['dExclude']
         fMI = data['fMI']
 
         ess_specific: dict = {'ftimesheet': ftimesheet, 'fOT': fOT,
@@ -406,12 +441,25 @@ def first_page(document, report_date: datetime, abbr: str, long_name: str):
 
 
 def closing(document, abbr: str, end_date: datetime):
+    """This function performs the final task of this programme. 1. Save the document as docx, 2. Convert the file to pdf format 3. Delete the docx file
+    final file will look like i.e NBNH-Monthly FS-Nov
+    Args:
+        document (_type_): current document object
+        abbr (str): abbreviation of the company of which user selected to run the report i.e ESS
+        end_date (datetime): user encoded end date
+    """
     document.save(f"{abbr}-Monthly FS-{end_date.strftime('%b')}.docx")
     convert(f"{abbr}-Monthly FS-{end_date.strftime('%b')}.docx")
     os.unlink(f"{abbr}-Monthly FS-{end_date.strftime('%b')}.docx")
 
 
 def page_separator(head: str, document):
+    """this function is used to create a page that separate one section to another. i.e Finance, HR and Sales etc..
+
+    Args:
+        head (str): a short description that should be placed at the center of the page. 
+        document (_type_): current document object
+    """
     text = document.add_paragraph()
     text.alignment = WD_ALIGN_PARAGRAPH.CENTER
     text = text.add_run(f'\n\n\n{head.upper()}')
@@ -437,13 +485,28 @@ def style_picker(name: str) -> dict:
 
 
 def header(title: str, company: str, document):
+    """this function is used to create headers for pages. The header contains company name and the name of the report 
+
+    Args:
+        title (str): user encoded report title
+        company (str): company based on the user selection
+        document (_type_): current document object
+    """
     cy_cp_pl_company_title = document.add_paragraph().add_run(f'{company}')
     apply_style_properties(cy_cp_pl_company_title, style_picker(name='company_title'))
     cy_cp_pl_report_title = document.add_paragraph().add_run(title)
     apply_style_properties(cy_cp_pl_report_title, style_picker(name='report_title'))
 
 
-def number_format(num):
+def number_format(num)->str:
+    """This function is used to property display digits in the pdf file. if number = 0, then '-', < 0 then (2,345) else >0 then 2,345
+
+    Args:
+        num (_type_): any number
+
+    Returns:
+        str: formatted string based on the digit value
+    """
     if num == 0:
         return "-"
     elif num >= 0:
@@ -508,6 +571,17 @@ def table_formatter(table_name, style_name: dict, special: list):
 
 
 def profitandlossheads(data: pd.DataFrame, start_date: datetime, end_date: datetime, bu: list) -> pd.DataFrame:
+    """for each time period under consideration, the function calculate top level values like np,gp,oh and revenue
+
+    Args:
+        data (pd.DataFrame): fGL -> merged view
+        start_date (datetime): starting date of the period
+        end_date (datetime): ending date of the period
+        bu (list): business unit (if the major values required on business unit wise)
+
+    Returns:
+        pd.DataFrame: dataframe consist of np,gp,oh,revenue for a given period
+    """
     gp_filt = (data['third_level'].isin(['Cost of Sales', 'Direct Income'])) & (
             data['voucher_date'] >= start_date) & (data['voucher_date'] <= end_date) & (
                   data['business_unit_name'].isin(bu))
@@ -535,6 +609,22 @@ def profitandlossheads(data: pd.DataFrame, start_date: datetime, end_date: datet
 def profitandloss(data: pd.DataFrame, fBudget: pd.DataFrame, bu: list, end_date: datetime, start_date: datetime,
                   basic_pl: bool = False,
                   mid_pl: bool = False, full_pl: bool = False, ) -> dict:
+    """create three types of pl i.e basic,mid and full for actual and budget results.
+
+    Args:
+        data (pd.DataFrame): fGL
+        fBudget (pd.DataFrame): fBudget
+        bu (list): business unit if required
+        end_date (datetime): end date considered for periodic calculation
+        start_date (datetime): start date considered for periodic calculation
+        basic_pl (bool, optional): _description_. Defaults to False.
+        mid_pl (bool, optional): _description_. Defaults to False.
+        full_pl (bool, optional): _description_. Defaults to False.
+
+    Returns:
+        dict: for each type of report i.e full,mid or basic various periodic profit and loss reports. i.e current period, previous period, same period last year etc.. calculated for both actual and budgeted
+    """
+    # this will be a dataframe which has basic data grouped by voucher date(here month end date) and some summary data from profitandlossheads
     df_basic: pd.DataFrame = pd.DataFrame(data={'voucher_date': [], 'amount': []})
     df_basic_bud: pd.DataFrame = pd.DataFrame(data={'voucher_date': [], 'amount': []})
     df_mid: pd.DataFrame = pd.DataFrame(data={'voucher_date': [], 'amount': []})
@@ -806,7 +896,7 @@ def plratios(df_pl: pd.DataFrame, plcombined: pd.DataFrame) -> dict:
                 df: pd.DataFrame = v.set_index('Description')
 
                 total_revenue: float = df.loc['Total Revenue', 'amount']
-                if measure == 'gp':   
+                if measure == 'gp':
                     if total_revenue != 0:
                         ratio: float = df.loc['Gross Profit', 'amount'] / total_revenue * 100
                     else:
@@ -891,10 +981,18 @@ def pl_month_detailed(document, data: pd.DataFrame, special: list):
     document.add_page_break()
 
 
-def coa_ordering(dCoAAdler: pd.DataFrame, database: str) -> list:
+def coa_ordering(dCoAAdler: pd.DataFrame) -> dict:
+    """Purpose is to have key(ledger name) value (sort order) pairs for each ledger code and headings (level first,second, third and forth) level values and also add positions for Gross, Net Profit
+    Overhead and Related party receivable and payable balances 
+
+    Args:
+        dCoAAdler (pd.DataFrame): chart of account for a selected company
+
+    Returns:
+        dict: the dictionary generated from a given chart of account will be used to sort the order to which the descriptions in summary and detaild PL/BS in report. 
+    """
     other_income_df: pd.DataFrame = dCoAAdler.loc[dCoAAdler['third_level'] == 'Indirect Income'].copy()
     coa_df: pd.DataFrame = dCoAAdler.loc[dCoAAdler['third_level'] != 'Indirect Income'].copy()
-
     coa_df.sort_values(by='ledger_code', inplace=True)
     coa_df.set_index(keys='ledger_code', inplace=True)
     coa_df.reset_index(inplace=True)
@@ -904,11 +1002,14 @@ def coa_ordering(dCoAAdler: pd.DataFrame, database: str) -> list:
     other_income_df.set_index(keys='ledger_code', inplace=True)
     other_income_df.reset_index(inplace=True)
     other_inc: list = other_income_df['ledger_code'].tolist()
-
+    # coa_df is sorted by ascending order below code will return a dictionary of key as ledger_name and index position as key.
     coa_sort_order: dict = coa_df['ledger_name'].reset_index().reset_index().set_index(keys='ledger_name')[
         'index'].to_dict()
 
     first_level: np.ndarray = coa_df['first_level'].unique()
+    # this will add key and values to coa_sort_order dictionary. First level group name should have a value more than the value of last ledger appear in that group. 
+    # i.e in NBN Tech Interest-Office Lease is a ledger having value of 127 and it is the last ledger in first_level interest_expenses group. so the Interest Expenses group in first_level
+    # should be more than 127. 0.1 is added to last value of the ledger group.
     for i in first_level:
         coa_sort_order[i] = coa_list.index(
             coa_df.loc[(coa_df['first_level'] == i), 'ledger_code'].max()) + 0.1
@@ -924,8 +1025,10 @@ def coa_ordering(dCoAAdler: pd.DataFrame, database: str) -> list:
     for i in forth_level:
         coa_sort_order[i] = coa_list.index(
             coa_df.loc[(coa_df['forth_level'] == i), 'ledger_code'].max()) + 0.4
+    # third_level of dCoAAdler has Cost of Sales and the Gross Profit should appear after that key. Note : Not all the companies having cost of sales in third level.
     coa_sort_order['Gross Profit'] = coa_sort_order.get('Cost of Sales', 0) + 0.1
 
+    # there may be multiple other income ledgers in chart of account. All those other income ledgers should be placed after Gross Profit
     for i, j in enumerate(other_inc):
         coa_sort_order[other_income_df.loc[other_income_df['ledger_code'] == j, 'ledger_name'].iloc[0]] = \
             coa_sort_order.get('Gross Profit', 0) + i / 10
@@ -947,7 +1050,7 @@ def coa_ordering(dCoAAdler: pd.DataFrame, database: str) -> list:
             (other_income_df['forth_level'] == i), 'ledger_code'].max(), 'ledger_name'].iloc[0]] + 0.4
     coa_sort_order['Total Overhead'] = coa_sort_order['Expenses'] + 0.1
     coa_sort_order['Net Profit'] = coa_sort_order['Expenses'] + 0.1
-
+    # this is to show Total Revenue in place of Direct Income
     value = coa_sort_order.pop('Direct Income')
     coa_sort_order['Total Revenue'] = value
 
@@ -958,6 +1061,8 @@ def coa_ordering(dCoAAdler: pd.DataFrame, database: str) -> list:
             coa_sort_order['Due To Related Parties'] = coa_sort_order.get('Current Liabilities') - 0.01
         else:
             coa_sort_order['Total Equity & Liabilities'] = coa_sort_order.get('Equity') + 0.01
+    # The sorted() function sorts the list of tuples produced by .items().
+    # The key=lambda item: item[1] argument tells the sorted() function to use the second element of each tuple (i.e., the dictionary value) for sorting.
     sorted_data = dict(sorted(coa_sort_order.items(), key=lambda item: item[1]))
     return sorted_data
 
@@ -1096,7 +1201,7 @@ def gpnpebitda_graph(end_date: datetime, document, ratios):
     document.add_picture(pl_graph_buf)
 
 
-def plmonthwise(document, data, special):
+def plmonthwise(document, data: pd.DataFrame, special:list[str]):
     data.loc[:, 'total'] = data.iloc[:, 1:].sum(axis=1)
     tbl_monthwise_basic = document.add_table(rows=1, cols=data.shape[1])
     tbl_monthwise_basic.columns[0].width = Cm(7.5)
@@ -1120,19 +1225,40 @@ def plmonthwise(document, data, special):
     table_formatter(table_name=tbl_monthwise_basic, style_name='table_style_1', special=special)
 
 
-def narration_refine(row):
+def narration_refine(row)->str:
+    """
+    Any unusual trasaction posted to the GL is posted with a narration wrapped in "|" symbol. 
+    This will take value of the narration column in fGL. If the narration surrounded by | and | the function will take what inside the | symbol
+
+    Args:
+        row (_type_): a row in fGL dataframe
+
+    Returns:
+        str: refined narration that is inside "|". i.e |Change sponsor charges for 4 employees| -> Change sponsor charges for 4 employees
+    """
     sample_text = row['narration']
     start_index = sample_text.find('|')
     end_index = sample_text.find('|', start_index + 1)
     return sample_text[start_index + 1:end_index].title()
 
 
-def abnormal_trn(data: pd.DataFrame, end_date: datetime):
+def abnormal_trn(data: pd.DataFrame, end_date: datetime)->pd.DataFrame:
+    """This will filter the fGL dataframe to YTD current month and for those transaction which has its narration wrappred within "|" symbol. 
+
+    Args:
+        data (pd.DataFrame): fGL dataframe
+        end_date (datetime): user encoded end_date
+
+    Returns:
+        pd.DataFrame: refined dataframe that contains abnormal transactions
+    """
     start_date: datetime = datetime(year=end_date.year, month=end_date.month, day=1)
+    # narration that are exclusively start and ends with "|" symbol. 
     data = data.loc[data['narration'].str.contains(r'\|[^|]+\|', regex=True) & (data['voucher_date'] >= start_date) & (
             data['voucher_date'] <= end_date) & (data['ledger_code'] >= 5000000000), ['voucher_date', 'narration',
                                                                                       'ledger_name', 'amount',
                                                                                       'voucher_number']]
+    # narration_refined is used to finetine the narration
     data.loc[:, 'narration'] = data.apply(narration_refine, axis=1)
     data.loc[:, 'amount'] = data['amount'] * -1
     data = data.groupby(by=['narration', 'ledger_name', 'voucher_number'], as_index=False)['amount'].sum()
@@ -1227,7 +1353,7 @@ def elvbumonthwise(document, end_date: datetime, special: list, fBudget: pd.Data
     table_formatter(table_name=tbl_monthwise_basic_elv_bu, style_name='table_style_1', special=special)
 
 
-def credits(document):
+def credits(document,abbr:str):
     credit = document.add_paragraph(
         '\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nNadun Jayathunga\n')
     credit.add_run('Chief Accountant\nNasser Bin Nawaf & Partners Holding W.L.L\n')
@@ -1236,6 +1362,7 @@ def credits(document):
     document.core_properties.author = ' '.join(re.findall('[A-Z][a-z]*', os.getlogin()))
     document.core_properties.keywords = ("Chief Accountant\nNasser Bin Nawaf and Partners Holdings "
                                          "W.L.L\nmail:njayathunga@nbn.qa\nTele:+974 4403 0407")
+    document.core_properties.title = f"{abbr}-Monthly FS"
 
 
 def plhistorical(document, special: list, data: pd.DataFrame, sort_order: list):
@@ -1320,8 +1447,9 @@ def interco_bal(data: pd.DataFrame, end_date: datetime, dCoAAdler: pd.DataFrame)
 def balancesheet(data: pd.DataFrame, end_date: datetime, dCoAAdler: pd.DataFrame, database: str,
                  company_info: dict) -> pd.DataFrame:
     offset_accounts: list = [i['data']['offset_accounts'] for i in company_info if i['data']['database'] == database][0]
-    doubtful_ledgers: list = [i['data']['doubtful'] for i in company_info if i['data']['database']==database][0]
-    doubtful_value = data.loc[(data['ledger_code'].isin(doubtful_ledgers) & (data['voucher_date']<=end_date)),'amount'].sum()
+    doubtful_ledgers: list = [i['data']['doubtful'] for i in company_info if i['data']['database'] == database][0]
+    doubtful_value = data.loc[
+        (data['ledger_code'].isin(doubtful_ledgers) & (data['voucher_date'] <= end_date)), 'amount'].sum()
     # data = data.loc[~data['ledger_code'].isin(doubtful_ledgers)]
     # Sum total of offset_accounts is zero. i.e. PDC
     interco_acc_names: list = [i for j in [
@@ -1331,7 +1459,9 @@ def balancesheet(data: pd.DataFrame, end_date: datetime, dCoAAdler: pd.DataFrame
 
     exclude_bs_codes: list = offset_accounts + interco_acc_codes
 
-    bs_filt = (data['voucher_date'] <= end_date) & (~data['ledger_code'].isin(exclude_bs_codes)) & (data['forth_level'].isin(['Assets', 'Liabilities', 'Equity']) & (~data['ledger_code'].isin(doubtful_ledgers)))
+    bs_filt = (data['voucher_date'] <= end_date) & (~data['ledger_code'].isin(exclude_bs_codes)) & (
+                data['forth_level'].isin(['Assets', 'Liabilities', 'Equity']) & (
+            ~data['ledger_code'].isin(doubtful_ledgers)))
     is_filt = (data['voucher_date'] <= end_date) & (
         data['forth_level'].isin(['Income', 'Expenses']))
 
@@ -1363,19 +1493,22 @@ def balancesheet(data: pd.DataFrame, end_date: datetime, dCoAAdler: pd.DataFrame
     bs_data.loc['Accounts Payables',
     'amount'] = (bs_data.loc['Accounts Payables', 'amount'] if 'Accounts Payables' in bs_data.index else 0) - dr_in_ap
     bs_data.loc['Other Receivable',
-    'amount'] = (bs_data.loc['Other Receivable', 'amount'] if 'Other Receivable' in bs_data.index else 0) + dr_in_ap + (doubtful_value if database == 'nbn_holding' else 0)
+    'amount'] = (bs_data.loc['Other Receivable', 'amount'] if 'Other Receivable' in bs_data.index else 0) + dr_in_ap + (
+        doubtful_value if database == 'nbn_holding' else 0)
     bs_data.loc['Trade Receivables',
-    'amount'] = (bs_data.loc['Trade Receivables', 'amount'] if 'Trade Receivables' in bs_data.index else 0) - cr_in_ar + (doubtful_value if database != 'nbn_holding' else 0)
+    'amount'] = (bs_data.loc[
+                     'Trade Receivables', 'amount'] if 'Trade Receivables' in bs_data.index else 0) - cr_in_ar + (
+                    doubtful_value if database != 'nbn_holding' else 0)
     bs_data.loc['Accruals & Other Payables', 'amount'] = (bs_data.loc[
                                                               'Accruals & Other Payables', 'amount'] if 'Accruals & Other Payables' in bs_data.index else 0) + cr_in_ar - rounding_diff
     bs_data.loc['Retained Earnings',
     'amount'] = (bs_data.loc['Retained Earnings', 'amount'] if 'Retained Earnings' in bs_data.index else 0) + cum_profit
     bs_data = pd.concat([bs_data, rpr_row, rpp_row], ignore_index=False)
 
-    ca: float = bs_data.loc['Cash & Cash Equivalents', 'amount'] + (
-        bs_data.loc['Inventory', 'amount'] if 'Inventory' in bs_data.index else 0) + bs_data.loc[
-                    'Other Receivable', 'amount'] + bs_data.loc['Trade Receivables', 'amount'] + bs_data.loc[
-                    'Due From Related Parties', 'amount']
+    ca: float = (bs_data.loc['Cash & Cash Equivalents', 'amount'] if 'Cash & Cash Equivalents' in bs_data.index else 0) + (
+        bs_data.loc['Inventory', 'amount'] if 'Inventory' in bs_data.index else 0) + (bs_data.loc[
+                    'Other Receivable', 'amount'] if 'Other Receivable' in bs_data.index else 0) + (bs_data.loc['Trade Receivables', 'amount'] if 'Trade Receivables' in bs_data.index else 0) + (bs_data.loc[
+                    'Due From Related Parties', 'amount'] if 'Due From Related Parties' in bs_data.index else 0)
     nca: float = (bs_data.loc['Intangible Assets', 'amount'] if 'Intangible Assets' in bs_data.index else 0) + \
                  (bs_data.loc[
                       'Property, Plant  & Equipment', 'amount'] if 'Property, Plant  & Equipment' in bs_data.index else 0) + \
@@ -1386,9 +1519,9 @@ def balancesheet(data: pd.DataFrame, end_date: datetime, dCoAAdler: pd.DataFrame
     equity: float = (bs_data.loc['Retained Earnings', 'amount'] if 'Retained Earnings' in bs_data.index else 0) + \
                     (bs_data.loc['Share Capital', 'amount'] if 'Share Capital' in bs_data.index else 0) + \
                     (bs_data.loc['Statutory Reserves', 'amount'] if 'Statutory Reserves' in bs_data.index else 0)
-    cl: float = bs_data.loc['Accounts Payables', 'amount'] + bs_data.loc['Accruals & Other Payables', 'amount'] + \
-                bs_data.loc[
-                    'Due To Related Parties', 'amount'] + (bs_data.loc[
+    cl: float = (bs_data.loc['Accounts Payables', 'amount'] if 'Accounts Payables' in bs_data.index else 0) + (bs_data.loc['Accruals & Other Payables', 'amount'] if 'Accruals & Other Payables' in bs_data.index else 0) + \
+                (bs_data.loc[
+                    'Due To Related Parties', 'amount'] if 'Due To Related Parties' in bs_data.index else 0 )+ (bs_data.loc[
                                                                'Short Term Bank Facilities', 'amount'] if 'Short Term Bank Facilities' in bs_data.index else 0)
     ncl: float = (bs_data.loc['Provisions', 'amount'] if 'Provisions' in bs_data.index else 0) + (bs_data.loc[
                                                                                                       'Lease Liabilities', 'amount'] if 'Lease Liabilities' in bs_data.index else 0) + (
@@ -2057,7 +2190,7 @@ def data_output(refined: dict, welcome_info: dict) -> dict:
 
     ratios_pandl: dict = plratios(df_pl=df_pl, plcombined=plcombined)
 
-    sort_order: list = coa_ordering(dCoAAdler=refined['dCoAAdler'], database=welcome_info['database'])
+    sort_order: list = coa_ordering(dCoAAdler=refined['dCoAAdler'])
     cp_month: pd.DataFrame = pd.concat(
         [cy_cp_basic.set_index('Description'), cy_pp_basic.set_index('Description'),
          py_cp_basic.set_index('Description'),
@@ -2709,10 +2842,10 @@ def total_revenue(fData: pd.DataFrame, dLogContract: pd.DataFrame, exclusion: di
                                                        fill_value=0,
                                                        index=['category',
                                                               pd.Grouper(key='voucher_date', freq='ME')]).reset_index()
-#     	category	voucher_date	4010201001	4010201002	4010201003	4010201004
-# 34	    general	    11/30/2024	    146,840 	 317,245 	 482,833 	 3,050 
-# 38	    qafco	    11/30/2024	    45,550 	    94,900 	     221,203 	 -   
-# 49	    ruwais	    11/30/2024	    9,700 	    34,100 	      -   	     -   
+    #     	category	voucher_date	4010201001	4010201002	4010201003	4010201004
+    # 34	    general	    11/30/2024	    146,840 	 317,245 	 482,833 	 3,050
+    # 38	    qafco	    11/30/2024	    45,550 	    94,900 	     221,203 	 -
+    # 49	    ruwais	    11/30/2024	    9,700 	    34,100 	      -   	     -
     overall_rev.rename(
         columns={4010201001: 'custom', 4010201002: 'transport', 4010201003: 'freight', 4010201004: 'other'},
         inplace=True)
@@ -2721,11 +2854,11 @@ def total_revenue(fData: pd.DataFrame, dLogContract: pd.DataFrame, exclusion: di
     invoice_rev: pd.DataFrame = df_for_rev.pivot_table(columns='ledger_code', values='amount', aggfunc='sum',
                                                        index=['voucher_date', 'voucher_number', 'order_id', 'category'],
                                                        fill_value=0).reset_index()
-#     	voucher_date	voucher_number	order_id	    category	4010201001	4010201002	4010201003	4010201004
-# 10918	11/30/2024	    NBL/IVL243680	NBNLSI246481	ruwais	    200 	    1,100 	    -   	    -   
-# 10919	11/30/2024	    NBL/IVL243681	NBNLAIP241788	general	    120 	    750 	    -   	    -   
-# 10920	11/30/2024	    NBL/IVL243682	NBNLSI246484	general	    -   	    3,750 	    -   	    -   
-# 10921	11/30/2024	    NBL/IVL243683	NBNLAIFCT241744	qafco	    1,800 	    -   	    -   	    -   
+    #     	voucher_date	voucher_number	order_id	    category	4010201001	4010201002	4010201003	4010201004
+    # 10918	11/30/2024	    NBL/IVL243680	NBNLSI246481	ruwais	    200 	    1,100 	    -   	    -
+    # 10919	11/30/2024	    NBL/IVL243681	NBNLAIP241788	general	    120 	    750 	    -   	    -
+    # 10920	11/30/2024	    NBL/IVL243682	NBNLSI246484	general	    -   	    3,750 	    -   	    -
+    # 10921	11/30/2024	    NBL/IVL243683	NBNLAIFCT241744	qafco	    1,800 	    -   	    -   	    -
 
     invoice_rev.rename(
         columns={4010201001: 'custom', 4010201002: 'transport', 4010201003: 'freight', 4010201004: 'other'},
@@ -2740,10 +2873,10 @@ def total_revenue(fData: pd.DataFrame, dLogContract: pd.DataFrame, exclusion: di
         profit_wo_salary.groupby(by=[pd.Grouper(key='voucher_date', freq='ME'), 'order_id', 'category'],
                                  as_index=False)[
             'prwosal'].sum()
-#     	voucher_date	order_id	    category	prwosal
-# 12262	11/30/2024	    NBNLAIFCT241718	qafco	    736 
-# 12263	11/30/2024	    NBNLAIFCT241728	qafco	    1,919 
-# 12264	11/30/2024	    NBNLAIFCT241741	general	    127 
+    #     	voucher_date	order_id	    category	prwosal
+    # 12262	11/30/2024	    NBNLAIFCT241718	qafco	    736
+    # 12263	11/30/2024	    NBNLAIFCT241728	qafco	    1,919
+    # 12264	11/30/2024	    NBNLAIFCT241741	general	    127
     return {'overall_rev': overall_rev, 'invoice_rev': invoice_rev, 'profit_wo_salary': profit_wo_salary}
 
 
@@ -2773,7 +2906,7 @@ def salary_cost(fGL: pd.DataFrame, dEmployee: pd.DataFrame, exclusion: dict) -> 
         fGL['cost_center'].isin(dEmployee['emp_id'].unique()) & (fGL['first_level'] == 'Staff Cost - Logistics') & (
                 fGL['voucher_date'] >= datetime(year=2022, month=1, day=1))].copy()
     # assign the site i.e Qafco, Ruwais based on the cost_center
-    sal_cost.loc[:,'category'] = sal_cost['cost_center'].apply(assign_employee, args=[exclusion]) 
+    sal_cost.loc[:, 'category'] = sal_cost['cost_center'].apply(assign_employee, args=[exclusion])
     sal_cost = sal_cost.pivot_table(index=['voucher_date', 'category'], columns='ledger_code', aggfunc='sum',
                                     fill_value=0,
                                     values='amount').reset_index()
@@ -2899,8 +3032,8 @@ def initial_profit(fGL: pd.DataFrame, invoice_values: dict, dEmployee: pd.DataFr
 
     invoice_values['invoice_rev'][['custom_sal', 'transport_sal', 'freight_sal']] = invoice_values['invoice_rev'].apply(
         salary_allocation, args=[sal_allocation, overall_rev], axis=1)
-#     	voucher_date	voucher_number	order_id	    category	4010201001	4010201002	4010201003	4010201004
-# 10911	11/30/2024	    NBL/IVL243673	NBNLAIFCT241741	general	    -   	    400 	    1,100 	        -   
+    #     	voucher_date	voucher_number	order_id	    category	4010201001	4010201002	4010201003	4010201004
+    # 10911	11/30/2024	    NBL/IVL243673	NBNLAIFCT241741	general	    -   	    400 	    1,100 	        -
 
     invoice_rev: pd.DataFrame = invoice_values['invoice_rev'].groupby(by=['voucher_date', 'order_id', 'category'],
                                                                       as_index=False).sum(
@@ -3433,7 +3566,8 @@ def customer_specifics(document, fInvoices: pd.DataFrame, end_date: datetime, dC
         if not ageing.empty:
             # ageing.rename(columns={'amount':'Amount'},inplace=True)
             age_tbl.set_title(title, loc='left', **heading_format)
-            age_tbl.table(cellText=[[i[0], f'{i[1]:,.0f}'] for i in ageing.values], colLabels=[i.title() for i in ageing.columns],
+            age_tbl.table(cellText=[[i[0], f'{i[1]:,.0f}'] for i in ageing.values],
+                          colLabels=[i.title() for i in ageing.columns],
                           cellLoc='center', loc='center', colColours=['#F8CBAD' for i in ageing.columns])
             age_tbl.axis('off')
 
@@ -3671,6 +3805,9 @@ def service_period(doj: datetime, end_date: datetime) -> str:
 
 
 def emp_age(dob: datetime, end_date: datetime) -> str:
+    # end_date.year - dob.year This calculates the difference in years between the end date and the date of birth (dob)
+    # ((end_date.month, end_date.day) < (dob.month, dob.day))This part checks if the person's birthday has already 
+    # occurred this year by comparing the month and day of the end_date with the dob.
     age: int = end_date.year - dob.year - ((end_date.month, end_date.day) < (dob.month, dob.day))
     service_ranges: list = [(25, '< 25'), (35, '26-35 Years'), (45, '36-45 Years'), (float('inf'), '46 +')]
     for threshold, label in service_ranges:
@@ -3746,8 +3883,8 @@ def employee_related(dEmployee: pd.DataFrame, end_date: datetime, database: str)
     emp_movement: dict = {f'Employees at {start_date.date()}': opening_emp,
                           'New Joiners': joined_emp, 'Resigned Employees': resigned_emp,
                           f'Employees at {end_date.date()}': closing_emp}
-    current_emp.loc[:,'Service'] = current_emp.loc[:, 'doj'].apply(func=service_period, args=[end_date])
-    current_emp.loc[:,'Age'] = current_emp.loc[:, 'dob'].apply(func=emp_age, args=[end_date])
+    current_emp.loc[:, 'Service'] = current_emp.loc[:, 'doj'].apply(func=service_period, args=[end_date])
+    current_emp.loc[:, 'Age'] = current_emp.loc[:, 'dob'].apply(func=emp_age, args=[end_date])
 
     service: list = current_emp['Service'].tolist()
     service: dict = {item: service.count(item) for item in set(service)}
@@ -4083,8 +4220,9 @@ def cohart(fSalesTill2020: pd.DataFrame, end_date: datetime, fInvoices: pd.DataF
            dCustomer: pd.DataFrame) -> dict:
     fInvoices: pd.DataFrame = fInvoices.loc[
         (fInvoices['invoice_date'] <= end_date), ['invoice_date', 'amount', 'customer_code']]
-
+    # change the invoice date to the last date of the month
     fInvoices['invoice_date'] = fInvoices['invoice_date'] + pd.offsets.MonthEnd(0)
+    #fSalesTill2020 contains sales transactions recorded in previous system. Peachtree
     fSalesTill2020: pd.DataFrame = fSalesTill2020.loc[
         fSalesTill2020['ledger_code'].isin([4010201001, 4010201002, 4010201003, 4010201004]), ['invoice_date', 'amount',
                                                                                                'customer_code']]
@@ -4383,14 +4521,14 @@ def established_points(customer_code: str, end_date: datetime, ESTABLISHED_SINCE
     return established_brackets(no_of_months=period_worked_months) * ESTABLISHED_SINCE_POINTS / 5
 
 
-def age_points(row: int, weight: list) -> int:
-    """Based on overdue days for each voucher points will be allocated. Overdue days are after credit period.
+def age_points(row: int, weight: list) -> float:
+    """Based on overdue days for each voucher, points will be allocated. Overdue days are after credit period.
 
     Args:
         day_overdue (int): Overdue days
 
     Returns:
-        int: Points allocated for each voucher based on their overdue no of days. 
+        float: Points allocated for each voucher based on their overdue no of days. 
     """
     bracket: str = row['Age Bracket']
     amount: float = row['amount']
@@ -4478,12 +4616,14 @@ def credit_rating(fInvoices: pd.DataFrame, end_date: datetime, fCollection: pd.D
         nbnl_profitability = nbnl_profitability.loc[
             (nbnl_profitability['voucher_date'] <= period) & (nbnl_profitability['voucher_date'] >= month_start_date), [
                 'customer_code', 'amount', 'total_rev']]
-        settlement_duration: list = []
-        age_bracket: list = []
-        gp_generated: list = []
-        established_since: list = []
-        worked_since: list = []
-        weight: list = [i[1] / i[0] for i in
+        settlement_duration: list[float] = []
+        age_bracket: list[float] = []
+        gp_generated: list[float] = []
+        established_since: list[float] = []
+        worked_since: list[float] = []
+        # for those amount collected shortest period wil get maximum points and the weight system is based on fibonnci series. 
+        # [10.0, 4.5, 2.6666666666666665, 1.4, 0.75, 0.38461538461538464, 0.19047619047619047, 0.08823529411764706, 0.03636363636363636, 0.011235955056179775, 0.0]
+        weight: list[float] = [i[1] / i[0] for i in
                         tuple(zip([1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144], [i for i in reversed(range(11))]))]
         customer_list: list = sorted(fInvoices.loc[(fInvoices['invoice_date'] >= month_start_date) & (
                 fInvoices['invoice_date'] <= period), 'cus_name'].unique())
@@ -4505,8 +4645,9 @@ def credit_rating(fInvoices: pd.DataFrame, end_date: datetime, fCollection: pd.D
             ageing_detailed.loc[:, 'balance'] = ageing_detailed.apply(age_points, axis=1, args=[weight])
 
             total_balance: float = ageing_detailed['amount'].sum() * 10
-            
-            receivable_points: float = ageing_detailed['balance'].sum() / total_balance * AGE_BRACKET_POINTS if total_balance != 0 else 0
+
+            receivable_points: float = ageing_detailed[
+                                           'balance'].sum() / total_balance * AGE_BRACKET_POINTS if total_balance != 0 else 0
             settled_invoices: pd.DataFrame = cust_ageing_summary['settled_invoices'][customer]
             if not settled_invoices.empty:
 
@@ -4559,9 +4700,10 @@ def problematic_customers(rating: pd.DataFrame, end_date: datetime, document):
     periods.insert(0, 'Customer Name')
     df_rating.fillna(value=0, inplace=True)
     # df_rating.iloc[:, 1:] = df_rating.iloc[:, 1:].applymap(lambda x: '.' if x < 35000 and x > 0 else np.nan)
-    df_rating.iloc[:, 1:] = df_rating.iloc[:, 1:].where(~((df_rating.iloc[:, 1:] < 35000) & (df_rating.iloc[:, 1:] > 0)), '.')
+    df_rating.iloc[:, 1:] = df_rating.iloc[:, 1:].where(
+        ~((df_rating.iloc[:, 1:] < 35000) & (df_rating.iloc[:, 1:] > 0)), '.')
     df_rating.iloc[:, 1:] = df_rating.iloc[:, 1:].mask((df_rating.iloc[:, 1:] != '.'), np.nan)
-    df_rating.reset_index(inplace=True,drop=True)
+    df_rating.reset_index(inplace=True, drop=True)
 
     for i, j in df_rating.iterrows():
         arr = list(j[1:])
@@ -4569,7 +4711,7 @@ def problematic_customers(rating: pd.DataFrame, end_date: datetime, document):
         for k in range(size - 2):
             if arr[k] == arr[k + 1] and arr[k + 1] == arr[k + 2] and arr[k + 2] == ".":
                 df_rating.iloc[i, k + 1] = '..'
-    df_rating.replace(to_replace='.',value=np.nan,inplace=True)
+    df_rating.replace(to_replace='.', value=np.nan, inplace=True)
     df_rating = df_rating[periods]
     df_rating.dropna(how='all', inplace=True, subset=df_rating.columns[1:])
     df_rating.fillna('', inplace=True)
@@ -4625,13 +4767,13 @@ def problematic_customers(rating: pd.DataFrame, end_date: datetime, document):
     # index position of the problematic month in the initial df_rating dataframe
     start: int = df_rating_cols.index(month_problematic)
     # index position of the customer under consideration in initioal dataframe
-    cus_name:str = rating.loc[rating['Customer Name']==customer].index[0]
+    cus_name: str = rating.loc[rating['Customer Name'] == customer].index[0]
     datestr: str = ''
     # below create a string like 1: 2024-03-31-28,135/ 2: 2024-04-30-19,379/ 3: 2024-05-31-20,790
-    for i,j in enumerate(range(start,start+3)):
-        value = rating.iloc[cus_name ,j]
+    for i, j in enumerate(range(start, start + 3)):
+        value = rating.iloc[cus_name, j]
         date = rating.columns.tolist()[j]
-        datestr += f'{i+1}: {date}-{value:,.0f}{"/ "  if i<2 else ""}'
+        datestr += f'{i + 1}: {date}-{value:,.0f}{"/ " if i < 2 else ""}'
 
     calculation_str: str = f"""Caluculation Method\n
 This table shows customers having credit rating less than 35,000 during last 12 months period. If the customer has recoded a credit rating less than 35,000 consecutively for three months, such customers are by definition identified as Problematic. Users are discouraged to work with such customers in future.\nExample:\n  {customer} was recording {datestr}"""
@@ -4704,7 +4846,16 @@ def occupancy_report(end_date: datetime, dJobs: pd.DataFrame, fInvoices: pd.Data
     return re_df
 
 
-def vacancy_cost(row):
+def vacancy_cost(row)->float:
+    """this function returns a value based on the room name. rooms names are either starting with V,A or G based on whether they are villas, apartment or gym. 
+    Average monthly rental value will be multiplied by the number of month that room remained vacant. 
+
+    Args:
+        row (_type_): a row in the vacant dataframe 
+
+    Returns:
+        float: number of vacant month * average rental per unit per month 
+    """
     unit_name: str = row['room_name']
     if unit_name.startswith('V'):
         return row['Total'] * 11_500
@@ -4717,15 +4868,25 @@ def vacancy_cost(row):
 
 
 def re_related(document, re_reports: dict):
+    """Creates a table which shows occupancy of each rental unit for last 12 months period. If occupied then '✔' else '✗'. 
+    Total number of months each rental unit remained vacant with the average vacancy cost for 12 months period for a rental unit is shown
+
+    Args:
+        document (_type_): current document object
+        re_reports (dict): dictionary contaning occupancy details
+    """
     re_reports: dict = re_reports
     occupancy: pd.DataFrame = re_reports['occupancy_report']
     occupancy = occupancy.drop(['room_id', 'status'], axis=1)
     occupancy.sort_values(by='room_name', inplace=True, ascending=False)
+    # add 'Total' column to dataframe which sums up the count of '✗' on a given row
     occupancy.loc[:, 'Total'] = occupancy.apply(lambda row: (row == '✗').sum(), axis=1)
+    # Multiply the value of row in 'Total' Column with average rental value each type of unit
     occupancy.loc[:, 'Cost'] = occupancy.apply(vacancy_cost, axis=1)
     occupancy_tbl = document.add_table(rows=1, cols=len(occupancy.columns))
     heading_cells = occupancy_tbl.rows[0].cells
 
+    # naming the header row. Months are shortend to 'Jan','Feb' format
     for idx, name in enumerate(occupancy.columns):
         if name == 'room_name':
             heading_cells[idx].text = 'Unit'
@@ -4735,18 +4896,24 @@ def re_related(document, re_reports: dict):
             heading_cells[idx].text = 'Cost'
         else:
             heading_cells[idx].text = name.strftime('%b')
-
+    # populate data for each rental unit. i.e vacant '✗' or occupied '✔'
     for _, row in occupancy.iterrows():
+        
         cells = occupancy_tbl.add_row().cells
         for j in range(len(row)):
             if j == 0:
                 cells[0].text = str(row['room_name'])
+            # for Total(last-1) and Cost(last) Column
+            elif j in ([len(row),len(row)-1]):
+                cells[j].text = str(number_format(num=row.iloc[j]))
             else:
                 cells[j].text = str(row.iloc[j])
-
-    document.add_paragraph(f"\nTotal cost of Vacancy for 12 months::QAR {occupancy['Cost'].sum()}")
+    # adds a paragraph under the table showing the total occupancy cost for the last 12 months period
+    # Total cost of Vacancy for 12 months::QAR 460,000
+    document.add_paragraph(f"\nTotal cost of Vacancy for 12 months::QAR {occupancy['Cost'].sum():,.0f}")
 
     table_formatter(table_name=occupancy_tbl, style_name='table_style_1', special=[])
+    # below will format the cells having '✗' with background colour of danger red. 
     for row in occupancy_tbl.rows[1:]:
         for j in range(len(row.cells)):
             if j != 0:
@@ -4761,25 +4928,38 @@ def re_related(document, re_reports: dict):
 
 
 def re_rev_recon(document, re_reports: dict, fGL: pd.DataFrame, end_date: datetime):
-    cp_start: datetime = end_date - pd.offsets.MonthBegin()
-    pp_start: datetime = cp_start - timedelta(days=1) - pd.offsets.MonthBegin()
+    """Create a summary table for the movement of revenue comparing previous month revenue with current month revenue. The movement consist of 
+    1. New Contract 2. Vacations 3. Price difference and 4. Miscellenious
+
+    Args:
+        document (_type_): current document object
+        re_reports (dict): dictionary consist of new, vacation and price changes of contracts
+        fGL (pd.DataFrame): fGL of the entity under consideration
+        end_date (datetime): user encoded end_date
+    """
+    cp_start: datetime = end_date - pd.offsets.MonthBegin() # returns begining of the current month 2024-11-30--> 2024-11-01
+    pp_start: datetime = cp_start - timedelta(days=1) - pd.offsets.MonthBegin() # returns first date of the previous period 2024-11-30--> 2024-10-01
+    # returns current month direct income i.e rental income
     cp_rev: float = fGL.loc[(fGL['voucher_date'] >= cp_start) & (fGL['voucher_date'] <= end_date) & (
             fGL['third_level'] == 'Direct Income'), 'amount'].sum()
+    # returns previous month direct income
     pp_rev: float = fGL.loc[(fGL['voucher_date'] >= pp_start) & (fGL['voucher_date'] < cp_start) & (
             fGL['third_level'] == 'Direct Income'), 'amount'].sum()
     rev_rec_tbl = document.add_table(rows=10, cols=2)
     heading_cells = rev_rec_tbl.rows[0].cells
     heading_cells[0].text = 'Previous month revenue'
     heading_cells[1].text = str(number_format(num=pp_rev))
-    rev_rec_tbl.rows[1].cells[0].text = 'a.) New Contracts'
+    rev_rec_tbl.rows[1].cells[0].text = 'a.) New Contracts/ Renewals'
     new_tbl = rev_rec_tbl.rows[2].cells[0].add_table(rows=1, cols=2)
     heading_cells = new_tbl.rows[0].cells
     heading_cells[0].text = 'Name'
     heading_cells[1].text = 'Amount'
+    # populate table data for the new contracts
     for _, j in re_reports['new'].iterrows():
         cells = new_tbl.add_row().cells
         cells[0].text = f"Unit # {j['room_id']}"
         cells[1].text = str(number_format(num=j['amount']))
+    # add the value of the new contracts 
     rev_rec_tbl.rows[2].cells[1].text = str(number_format(num=re_reports['new']['amount'].sum()))
 
     rev_rec_tbl.rows[3].cells[0].text = 'b.) Vacations'
@@ -4787,6 +4967,7 @@ def re_rev_recon(document, re_reports: dict, fGL: pd.DataFrame, end_date: dateti
     heading_cells = vacated_tbl.rows[0].cells
     heading_cells[0].text = 'Name'
     heading_cells[1].text = 'Amount'
+    # populate table data for the tenants who vacated
     for _, j in re_reports['vacated'].iterrows():
         cells = vacated_tbl.add_row().cells
         cells[0].text = f"Unit # {j['room_id']}"
@@ -4800,7 +4981,7 @@ def re_rev_recon(document, re_reports: dict, fGL: pd.DataFrame, end_date: dateti
     heading_cells[1].text = 'Amount'
     for _, j in re_reports['price_change'].iterrows():
         cells = changes_tbl.add_row().cells
-        cells[0].text = f"Unit # {j['room_id']}"
+        cells[0].text = f"Unit # {j['room_id']}" # Unit # 15
         cells[1].text = str(number_format(num=j['change']))
     rev_rec_tbl.rows[6].cells[1].text = str(number_format(num=re_reports['price_change']['change'].sum()))
 
@@ -4815,11 +4996,11 @@ def re_rev_recon(document, re_reports: dict, fGL: pd.DataFrame, end_date: dateti
     changes_tbl.style = 'Table Grid'
 
     document.add_paragraph('\nVacant Villas\n')
-
-    vacant_villas: list = re_reports['occupancy_report'].loc[
+    # list down villas vacant on the current month
+    vacant_villas: list[str] = re_reports['occupancy_report'].loc[
         re_reports['occupancy_report'][end_date] == '✗', 'room_id'].tolist()
     for idx, j in enumerate(vacant_villas):
-        document.add_paragraph(f'{idx + 1}: Villa No {j}')
+        document.add_paragraph(f'{idx + 1}: Villa No {j}') # 2: Villa No 6
 
 
 def rpt_transactions(end_date: datetime, fInvoices: pd.DataFrame, fGL: pd.DataFrame, fPurchase: pd.DataFrame,
@@ -4923,20 +5104,40 @@ def offset_transctions(end_date: datetime) -> dict:
                               'dr_ledger': dr_ledger}
 
 
-def consolidated_pandl():
+def consolidated_pandl(welcome_info: dict):
     dbs = [i['data']['database'] for i in company_info]
     fGLConsolidated: pd.DataFrame = pd.DataFrame()
+    dCoAAdlerConsolidated: pd.DataFrame = pd.DataFrame()
+    fBudgetConsolidated: pd.DataFrame = pd.DataFrame()
     for db in dbs:
         engine = create_engine(
             f'postgresql://{db_info["USERNAME"]}:{db_info["PWD"]}@{db_info["HOSTNAME"]}:{db_info["PORT_ID"]}/{db}')
         fGL: pd.DataFrame = pd.read_sql_query(sql=f'SELECT * FROM merged', con=engine)
+        dCoAAdler: pd.DataFrame = pd.read_sql_table(table_name='dCoAAdler', con=engine)
+        fBudget: pd.DataFrame = pd.read_sql_table(table_name='fBudget', con=engine)
+        dCoAAdler.loc[:,'database'] = db
         fGL.loc[:, 'database'] = db
+        fBudget: pd.DataFrame = refine_budget_df(fBudget=fBudget,database=db,dCoAAdler=dCoAAdler)
         fGLConsolidated = pd.concat([fGL[['amount', 'ledger_code', 'voucher_date', 'forth_level', 'third_level',
-                                          'second_level', 'first_level', 'business_unit_name']], fGLConsolidated],
+                                          'second_level', 'first_level', 'business_unit_name','database','ledger_name']], fGLConsolidated],
                                     ignore_index=True)
+        dCoAAdlerConsolidated = pd.concat([dCoAAdler[['ledger_code','forth_level','third_level','second_level','first_level','ledger_name','database']], dCoAAdlerConsolidated],
+                                    ignore_index=True)
+        fBudgetConsolidated = pd.concat([fBudget, fBudgetConsolidated],
+                                    ignore_index=True)
+    refined_data :dict = {'fGL':fGLConsolidated,'dCoAAdler':dCoAAdlerConsolidated,'fBudget':fBudgetConsolidated}
+    output_data: dict = data_output(refined=refined_data, welcome_info=welcome_info)
 
 
-def salary_group(row):
+def salary_group(row)->str:
+    """this function will generate text string based on the value it received
+
+    Args:
+        row (_type_): a row in employee master
+
+    Returns:
+        str: string based on the value it receives
+    """
     salary: float = row['gross_salary']
     if salary <= 2_000:
         return 'Upto 2,000'
@@ -4957,8 +5158,8 @@ def grouphr(database: str, end_date: datetime) -> dict:
 
     Returns:
         dict: return dictionary which consist of various HR related matrixs and consolidated GL
-    """    
-    #as we use the data returns from function only for the current year. 
+    """
+    # as we use the data returns from function only for the current year.
     start_date: datetime = datetime(year=end_date.year, month=1, day=1)
     # date formatted in a way that can be injected to a sql query
     start_date: str = f"'{start_date.strftime('%Y-%m-%d')}'"
@@ -4967,7 +5168,8 @@ def grouphr(database: str, end_date: datetime) -> dict:
         engine_c = create_engine(
             f'postgresql://{db_info["USERNAME"]}:{db_info["PWD"]}@{db_info["HOSTNAME"]}:{db_info["PORT_ID"]}/{database}')
         dCountry: pd.DataFrame = pd.read_sql_table(table_name='countries', con=engine_c)
-        dbs = [i['data']['database'] for i in company_info] # all the databased in the postgres (i.e all the subsidiaries of NBNH)
+        dbs = [i['data']['database'] for i in
+               company_info]  # all the databased in the postgres (i.e all the subsidiaries of NBNH)
         # creating empty dataframes to union dataframes coming from various companies. 
         dEmployeeConsolidated: pd.DataFrame = pd.DataFrame()
         fGLConsolidated: pd.DataFrame = pd.DataFrame()
@@ -4983,7 +5185,7 @@ def grouphr(database: str, end_date: datetime) -> dict:
             dEmployee = dEmployee.loc[dEmployee['company'].isin(similar_names)]
             # this is to determine which ledger accounts to be considered while calculating the ctc amount
             ctc_ledgers: list = [i['data']['ctc_ledgers'] for i in company_info if i['data']['database'] == db][0]
-            if ctc_ledgers: # not all the companies has ctc ledgers i.e nbn sea freight. below will work only if ctc_ledger list is not empty
+            if ctc_ledgers:  # not all the companies has ctc ledgers i.e nbn sea freight. below will work only if ctc_ledger list is not empty
                 # this will make a string to be used in sql query
                 ctc_ledgers_str = ', '.join([str(x) for x in ctc_ledgers])
                 query = f"""
@@ -4992,26 +5194,27 @@ def grouphr(database: str, end_date: datetime) -> dict:
                         WHERE ledger_code IN ({ctc_ledgers_str}) AND cost_center IS NOT NULL AND voucher_date >= {start_date};
                         """
                 fGL: pd.DataFrame = pd.read_sql_query(sql=query, con=engine)
-                fGL.loc[:, 'company'] = db # fGL imported initially does not have company name as field
+                fGL.loc[:, 'company'] = db  # fGL imported initially does not have company name as field
             else:
                 fGL = pd.DataFrame()
             # below is to avoid warning in concatenating all n/a fields
-            fGL.dropna(axis=1, how='all',inplace=True) 
-            if fGL.empty: # some fGL for the given conditions returns an empty dataframes. such dataframe should not be concatenated
+            fGL.dropna(axis=1, how='all', inplace=True)
+            if fGL.empty:  # some fGL for the given conditions returns an empty dataframes. such dataframe should not be concatenated
                 pass
             else:
                 fGLConsolidated = pd.concat([fGL, fGLConsolidated], ignore_index=True)
-            dEmployee.dropna(axis=1, how='all',inplace=True) # some datafram contains all n/a fields. 
+            dEmployee.dropna(axis=1, how='all', inplace=True)  # some datafram contains all n/a fields.
             if dEmployee.empty:
                 pass
             else:
-                dEmployeeConsolidated = pd.concat([dEmployee, dEmployeeConsolidated], ignore_index=True)     
+                dEmployeeConsolidated = pd.concat([dEmployee, dEmployeeConsolidated], ignore_index=True)
         dEmployeeConsolidated = dEmployeeConsolidated.loc[
-            dEmployeeConsolidated['emp_id'].str.contains('ESS|GAT|NBNH|NBNL|NTR|PH')] # this filter is to exclude temporary clearners and guards in PH and ESS respectively
+            dEmployeeConsolidated['emp_id'].str.contains(
+                'ESS|GAT|NBNH|NBNL|NTR|PH')]  # this filter is to exclude temporary clearners and guards in PH and ESS respectively
         dEmployeeConsolidated['nationality'] = dEmployeeConsolidated['nationality'].replace(
             {'TUNIASIAN': 'TUNISIAN', 'MORROCO': 'MOROCCAN', 'ITALY': 'Italian', 'ROMANIA': 'Romanian',
              'Nicaragua': 'Nicaraguan', 'SAUDIAN': 'Saudi', 'SERBIA': 'Serbian', 'SRILANKAN': 'Sri Lankan',
-             'UKRAINE': 'Ukrainian'}) # adler master data has some erroneos nationality which is corrected here. 
+             'UKRAINE': 'Ukrainian'})  # adler master data has some erroneos nationality which is corrected here.
         dEmployeeConsolidated.loc[:, 'nationality'] = dEmployeeConsolidated['nationality'].apply(lambda x: x.title())
         dEmployeeConsolidated = pd.merge(left=dEmployeeConsolidated, right=dCountry[['nationality', 'continent_code']],
                                          on='nationality', how='left')
@@ -5037,7 +5240,7 @@ def console_hrrelated(database: str, end_date: datetime, document):
     couples = dict(zip([i['data']['database'] for i in company_info], [i['data']['abbr'] for i in company_info]))
     for_ctc: pd.DataFrame = group_emp_data['fGLConsolidated']
     # dataframe required to be filtered for non zero values as not always companies having ctc amounts. dataframes with zero amount will trigger errors while ploting a pie chart.
-    for_ctc.dropna(inplace=True,subset=['amount'])
+    for_ctc.dropna(inplace=True, subset=['amount'])
     ctc.pie(x=for_ctc['amount'].tolist(),
             labels=[couples[i] for i in for_ctc['company'].tolist()], autopct='%.0f%%',
             labeldistance=1,
@@ -5126,7 +5329,17 @@ def console_hrrelated(database: str, end_date: datetime, document):
     document.add_page_break()
 
 
-def interco_balances(end_date: datetime):
+def interco_balances(end_date: datetime)->dict:
+    """the function is used to calculate end_date intercompany balances and throughout the year inter-company balances towards hnbk/ nbkh.
+
+    Args:
+        end_date (datetime): user encoded end_Date
+
+    Returns:
+        dict: dict containing month wise inter-company balances of all the companies towards nbn holding companies and
+            dataframe contaning receivable/payable balance from / to hnbk and nbkh towards nbnh
+    """
+    # to calculate the starting date of one year before i.e for 2024-11-30 start_date is 2023-12-01
     start_date: datetime = end_date - relativedelta(years=1) + timedelta(days=1)
     month_end_dates = pd.date_range(start=start_date, end=end_date, freq='ME')
     interco_bal_dict: dict = {}
@@ -5140,34 +5353,44 @@ def interco_balances(end_date: datetime):
         engine = create_engine(
             f'postgresql://{db_info["USERNAME"]}:{db_info["PWD"]}@{db_info["HOSTNAME"]}:{db_info["PORT_ID"]}/{db}')
         fGL: pd.DataFrame = pd.read_sql_query(sql=f'SELECT * FROM merged', con=engine)
+        # this is to identify company to which a transaction belongs to in consolidated fGL
         fGL.loc[:, 'database'] = db
         fGLConsolidated = pd.concat([fGL[['amount', 'ledger_code', 'voucher_date', 'database']], fGLConsolidated],
                                     ignore_index=True)
         dCoAAdler: pd.DataFrame = pd.read_sql_table(table_name='dCoAAdler', con=engine)
+        # this is to identify company to which a ledger belongs to in consolidated dCoAAdler
         dCoAAdler.loc[:, 'database'] = db
         dCoAAdlerConsolidated = pd.concat(
             [dCoAAdler[['ledger_code', 'ledger_name', 'database']], dCoAAdlerConsolidated], ignore_index=True)
 
     for me_date in month_end_dates:
         related_balances: pd.DataFrame = pd.DataFrame()
+        # create a dataframe having column which represent companies currently nbn holding is considering for consolidation
         related_balances: pd.DataFrame = pd.DataFrame(columns=[i for i in company_data if company_data[i]['active']])
         related_balances['Company'] = 'Company'
+        # this will make a column which has all the companies that related to each other
         related_balances['Company'] = [i for i in company_data]
         related_balances.set_index('Company', inplace=True)
-        for k, _ in company_data.items():
+        for k, _ in company_data.items():  # here k is proper company name i.e Elite Security Services W.L.L. This is for rows
             for i in [company for company in company_data if
-                      company_data[company]['active']]:  # Elite Security Services W.L.L
+                      company_data[company][
+                          'active']]:  # for each row this loop will loop over all the active companies. Elite Security Services W.L.L
+                # the purpose of using similar name is to identify the database. K in company data is a propery formatted name while database is shortened form.
+                # long_name company_info dict is always appearing in similar names in company_data
                 similar_names = [company_data[x]['names'] for x in company_data if i in company_data[x]['names']][0]
                 database = [j['data']['database'] for j in company_info if j['data']['long_name'] in similar_names][0]
+                # for a given row 'k' i.e Elite Security this will list down all the available ledger codes for a column i.e premium
                 interco_codes: np.ndarray = dCoAAdlerConsolidated.loc[(
                         dCoAAdlerConsolidated['ledger_name'].isin(company_data[k]['names']) & (
                         dCoAAdlerConsolidated['database'] == database)), 'ledger_code'].tolist()
                 if interco_codes:
+                    # this returns for a given row i.e Elite the total inter-company balance with a given column i.e premium
                     amount: float = fGLConsolidated.loc[((fGLConsolidated['database'] == database) & (
                         fGLConsolidated['ledger_code'].isin(interco_codes)) & (fGLConsolidated[
                                                                                    'voucher_date'] <= me_date)), 'amount'].sum()
                     related_balances.loc[k, i] = amount
                 else:
+                    # it is required to to fill the blank values with np.nan as in later stage such rows with all n/a will be removed
                     related_balances.loc[k, i] = np.nan
         abbr = []
         display_name = []
@@ -5177,47 +5400,67 @@ def interco_balances(end_date: datetime):
             for j in company_data:
                 if long_name in company_data[j]['names']:
                     display_name.append(j)
+        # to save the space it is required to replace the full name of a company with shortened form of the same. i.e GAT Middle East -> GAT
         couple = dict(zip(display_name, abbr))
         related_balances.rename(columns=couple, inplace=True)
+        # replace all zero values with np.nan as this is required to exclude all n/a rows
         related_balances = related_balances.map(lambda x: np.nan if x == 0 else x)
         related_balances.dropna(how='all', inplace=True, axis=0)
+        # it is required fill remaining n/a values with zero, as otherwise at the tables creation step, it will create an error
         related_balances.fillna(value=0, inplace=True)
+        # this will append each month inter-company table to a dict.
         interco_bal_dict[me_date] = related_balances
+    # list all the companies belongs to hnbk and nbkh groups
     hnbk: list = [i for i in company_data if company_data[i]['parent'] == 'hnbk']
     nbkh: list = [i for i in company_data if company_data[i]['parent'] == 'nbkh']
     for i in interco_bal_dict:
+        # here i is month_ends for each month calculate the sum of all the related party balances that belongs to each group i.e hnbk or nbkh
         hnbk_bal = interco_bal_dict[i].loc[interco_bal_dict[i].index.isin(hnbk)].sum(numeric_only=True).sum() * -1
         nbkh_bal = interco_bal_dict[i].loc[interco_bal_dict[i].index.isin(nbkh)].sum(numeric_only=True).sum() * -1
         hnbk_rpt_bal.append(hnbk_bal)
         nbkh_rpt_bal.append(nbkh_bal)
+    # below dataframe will have amount payable / receivable from/to hnbk/nbkh towards nbn holding companies. 
     yearly_rpt_bal: pd.DataFrame = pd.DataFrame(
         data={'Period': month_end_dates, 'HNBK': hnbk_rpt_bal, 'NBKH': nbkh_rpt_bal})
     return {'interco_bal_dict': interco_bal_dict, 'yearly_rpt_bal': yearly_rpt_bal}
 
 
 def rpt_graphs(document, end_date: datetime):
+    """this will create inter-company values table for the user encoded month and hnbk and nbkh inter-company balance movement for last 12 months period 
+
+    Args:
+        document (_type_): current word document object
+        end_date (datetime): user encoded end date
+    """
     rpt_df_total: dict = interco_balances(end_date=end_date)
+    # get the inter-company balances dataframe for the end_date period
     rpt_df: dict = rpt_df_total['interco_bal_dict'][end_date]
+    # currently company is the index
     rpt_df.reset_index(inplace=True)
+    info = document.add_paragraph()
+    heading = info.add_run('Inter-Company Balances\n')
+    heading.bold = True
     rpt_info = document.add_table(rows=1, cols=rpt_df.shape[1])
     heading_cells = rpt_info.rows[0].cells
-
+    # header row for the inter-company balances table
     for i in range(rpt_df.shape[1]):
         if i == 0:
-            heading_cells[i].text = 'Description'
+            heading_cells[i].text = 'Company'
         else:
             heading_cells[i].text = str(list(rpt_df.columns)[i])
-
+    # table data for inter-company balances tabel
     for _, row in rpt_df.iterrows():
         cells = rpt_info.add_row().cells
         for j in range(len(row)):
             if j == 0:
                 cells[0].text = str(row['Company'])
             else:
-                cells[j].text = number_format(row.iloc[j])
+                cells[j].text = number_format(-row.iloc[j])
+    info = document.add_paragraph('\nCompany Abbreviation')
+    # create a legend for the short form header row in the table
     for i in company_info:
-        abbr:str = i['data']['abbr']
-        long_name:str = i['data']['long_name']
+        abbr: str = i['data']['abbr']
+        long_name: str = i['data']['long_name']
         info = document.add_paragraph()
         heading = info.add_run(f'{abbr}-')
         heading.bold = True
@@ -5247,3 +5490,11 @@ def rpt_graphs(document, end_date: datetime):
     plt.close(fig)
     interco_buf.seek(0)
     document.add_picture(interco_buf)
+    # make a string that consist of companies of hnbk and nbkh groups
+    nbkh: list = [i for i in company_data if company_data[i]['parent'] == 'nbkh']
+    hnbk: list = [i for i in company_data if company_data[i]['parent'] == 'hnbk']
+    companylist: str = f"Companies mentioned below were considered\nNBKH:{', '.join(nbkh)}\nHNBK:{', '.join(hnbk)}"
+
+    info = document.add_paragraph()
+    heading = info.add_run(companylist)
+    heading.font.size = Pt(7)
